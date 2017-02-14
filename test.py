@@ -5,7 +5,7 @@ import subprocess
 
 import networkx
 
-from phasm.alignments import parse_local_alignments, parse_reads
+from phasm.io import parse_local_alignments, parse_reads
 from phasm.assembly_graph import build_assembly_graph, remove_transitive_edges
 
 logging.basicConfig()
@@ -19,7 +19,7 @@ if __name__ == '__main__':
     parser.add_argument('database',
                         help="DAZZ_DB main database file")
     parser.add_argument(
-        'alignments', type=argparse.FileType, nargs='?', default=sys.stdin,
+        'alignments', type=argparse.FileType(), nargs='?', default=sys.stdin,
         help="File to read local alignments in LAdump format from"
     )
 
