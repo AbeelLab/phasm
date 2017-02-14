@@ -43,21 +43,21 @@ def reverse_id(node_id):
 def build_assembly_graph(la_iter: Iterable[LocalAlignment]) -> AssemblyGraph:
     g = AssemblyGraph()
 
+    logger.info('Start building assembly graph...')
+    num_contained = 0
     for la in la_iter:
         la_type = la.classify()
 
         if (la_type == AlignmentType.A_CONTAINED or
                 la_type == AlignmentType.B_CONTAINED):
             logger.debug('Contained overlap: %s', la)
+            num_contained += 1
             continue
 
         aid = la.a.id + "+"
         bid = la.b.id + ("+" if la.strand == Strand.SAME else "-")
         r_aid = reverse_id(aid)
         r_bid = reverse_id(bid)
-
-        logger.debug("LA: %s", la)
-        logger.debug("%s -> %s, %s -> %s", aid, bid, r_bid, r_aid)
 
         if la_type == AlignmentType.OVERLAP_AB:
             g.add_edge(aid, bid, {
@@ -69,11 +69,10 @@ def build_assembly_graph(la_iter: Iterable[LocalAlignment]) -> AssemblyGraph:
                            (len(la.a) - la.arange[1]))
             })
 
-            logger.debug('Added edge from %s to %s with weight %d',
+            logger.debug('Added edge (%s, %s) with weight %d',
                          aid, bid, g[aid][bid]['weight'])
-            logger.debug('Added edge from %s to %s with weight %d',
-                         r_bid, r_aid,
-                         g[r_bid][r_aid]['weight'])
+            logger.debug('Added edge (%s, %s) with weight %d',
+                         r_bid, r_aid, g[r_bid][r_aid]['weight'])
         else:
             g.add_edge(bid, aid, {
                 'weight': la.brange[0] - la.arange[0]
@@ -84,14 +83,15 @@ def build_assembly_graph(la_iter: Iterable[LocalAlignment]) -> AssemblyGraph:
                            (len(la.b) - la.brange[1]))
             })
 
-            logger.debug('Added edge from %s to %s with weight %d',
+            logger.debug('Added edge (%s, %s) with weight %d',
                          bid, aid, g[bid][aid]['weight'])
-            logger.debug('Added edge from %s to %s with weight %d',
+            logger.debug('Added edge (%s, %s) with weight %d',
                          r_aid, r_bid, g[r_aid][r_bid]['weight'])
 
     logger.info("Built assembly graph with %d nodes and %d edges.",
                 networkx.number_of_nodes(g),
                 networkx.number_of_edges(g))
+    logger.info("Skipped %d contained reads.", num_contained)
 
     return g
 
