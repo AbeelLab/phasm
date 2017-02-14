@@ -125,8 +125,9 @@ def remove_transitive_edges(g: AssemblyGraph, edge_len: str='weight',
                 networkx.number_of_edges(g))
 
     # Ensure that when we iterate over a node's neighbours, we obtain the
-    # "longest" edge first.
+    # "shortest" edge first.
     g.sort_adjacency_lists(weight=edge_len)
+    logger.debug("Sorted adjacency lists")
 
     num_nodes = networkx.number_of_nodes(g)
     for i, v in enumerate(g):
@@ -158,24 +159,31 @@ def remove_transitive_edges(g: AssemblyGraph, edge_len: str='weight',
             w_neighbours = g[w]
             first = True
             for x in w_neighbours:
-                if first:
-                    # The first neighbour is the smallest (due to sorting)
-                    node_state[x] = NodeState.ELIMINATED
-                    logger.debug("Node %s marked eliminated (smallest)", x)
-                    first = False
+                if node_state[x] == NodeState.IN_PLAY:
+                    if first:
+                        # The first neighbour is the smallest (due to sorting)
+                        node_state[x] = NodeState.ELIMINATED
+                        logger.debug("Node %s marked eliminated (smallest)", x)
+                        first = False
 
-                if g[w][x][edge_len] < length_fuzz:
-                    if node_state[x] == NodeState.IN_PLAY:
+                    if g[w][x][edge_len] < length_fuzz:
                         node_state[x] = NodeState.ELIMINATED
                         logger.debug("Node %s marked eliminated", x)
 
         for w in v_neighbours:
             if node_state[w] == NodeState.ELIMINATED:
                 edges_to_remove.append((v, w))
-                logger.debug("Removing edge (%s, %s)", v, w)
+                logger.debug("Marked edge (%s, %s) for removal", v, w)
                 node_state[w] = NodeState.VACANT
 
+    logger.info("Removing %d edges...", len(edges_to_remove))
     for e in edges_to_remove:
-        g.remove_edges_from(edges_to_remove)
+        # Not using `g.remove_edges_from` because that function checks if `u`
+        # and `v` are existing nodes, which makes it too slow
+        u, v = e[:2]
+        del g.succ[u][v]
+        del g.pred[v][u]
 
-    g.remove_nodes_from(n for n in g if g.degree(n) == 0)
+    logger.info("Removing nodes with no edges...")
+    g.remove_nodes_from([n for n in g if g.degree(n) == 0])
+    logger.info("Done.")
