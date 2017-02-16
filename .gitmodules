@@ -1,0 +1,3 @@
+[submodule "src/external/seqan"]
+	path = src/external/seqan
+	url = https://github.com/seqan/seqan
