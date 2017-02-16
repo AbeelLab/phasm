@@ -1,3 +1,0 @@
-[submodule "src/vendor/seqan"]
-	path = src/vendor/seqan
-	url = https://github.com/seqan/seqan
