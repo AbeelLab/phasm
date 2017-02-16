@@ -1,3 +1,6 @@
 [submodule "src/external/seqan"]
 	path = src/external/seqan
 	url = https://github.com/seqan/seqan
+[submodule "src/external/catch"]
+	path = src/external/catch
+	url = https://github.com/philsquared/Catch
