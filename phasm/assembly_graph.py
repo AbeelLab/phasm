@@ -40,11 +40,15 @@ def reverse_id(node_id):
         return node_id[:-1] + '+'
 
 
-def build_assembly_graph(la_iter: Iterable[LocalAlignment]) -> AssemblyGraph:
+def build_assembly_graph(la_iter: Iterable[LocalAlignment],
+                         max_overhang: int=1000,
+                         overlap_overhang_ratio: float=0.8) -> AssemblyGraph:
     g = AssemblyGraph()
 
     logger.info('Start building assembly graph...')
     num_contained = 0
+    num_too_large_overhang = 0
+
     for la in la_iter:
         la_type = la.classify()
 
@@ -52,6 +56,17 @@ def build_assembly_graph(la_iter: Iterable[LocalAlignment]) -> AssemblyGraph:
                 la_type == AlignmentType.B_CONTAINED):
             logger.debug('Contained overlap: %s', la)
             num_contained += 1
+            continue
+
+        threshold = min(max_overhang,
+                        la.get_overlap_length()*overlap_overhang_ratio)
+        if la.get_overhang() > threshold:
+            logger.debug("Too much overhang: %d > min(%d, %d). LA: %s",
+                         la.get_overhang(), la.get_overlap_length(),
+                         la.get_overlap_length()*overlap_overhang_ratio,
+                         la)
+            num_too_large_overhang += 1
+
             continue
 
         aid = la.a.id + "+"
@@ -92,6 +107,8 @@ def build_assembly_graph(la_iter: Iterable[LocalAlignment]) -> AssemblyGraph:
                 networkx.number_of_nodes(g),
                 networkx.number_of_edges(g))
     logger.info("Skipped %d contained reads.", num_contained)
+    logger.info("Skipped %d reads with too much overhang.",
+                num_too_large_overhang)
 
     return g
 
@@ -138,7 +155,9 @@ def remove_transitive_edges(g: AssemblyGraph, edge_len: str='weight',
         if not v_neighbours:
             continue
 
-        longest_edge = max(w[edge_len] for w in v_neighbours.values())
+        # Get the last item in the sorted adjacency list, which is the longest
+        # edge
+        longest_edge = next(reversed(v_neighbours.values()))[edge_len]
         longest_edge += length_fuzz
 
         for w in v_neighbours:
@@ -176,14 +195,90 @@ def remove_transitive_edges(g: AssemblyGraph, edge_len: str='weight',
                 logger.debug("Marked edge (%s, %s) for removal", v, w)
                 node_state[w] = NodeState.VACANT
 
-    logger.info("Removing %d edges...", len(edges_to_remove))
-    for e in edges_to_remove:
-        # Not using `g.remove_edges_from` because that function checks if `u`
-        # and `v` are existing nodes, which makes it too slow
-        u, v = e[:2]
-        del g.succ[u][v]
-        del g.pred[v][u]
+    return edges_to_remove
 
-    logger.info("Removing nodes with no edges...")
-    g.remove_nodes_from([n for n in g if g.degree(n) == 0])
-    logger.info("Done.")
+
+def node_path_edges(nodes):
+    """
+    A generator that yields the edges for a path between the given nodes.
+
+    Example:x
+
+    >>> path = ['n1', 'n2', 'n3']
+    >>> list(node_path_edges(path))
+    [('n1', 'n2'), ('n2', 'n3')]
+
+    """
+    if len(nodes) < 2:
+        raise ValueError("Not enough nodes to generate a path from")
+
+    node_iter = iter(nodes)
+
+    # Automatically raises StopIteration at the end of the iterator
+    node_from = next(node_iter)
+    while True:
+        node_to = next(node_iter)
+        yield (node_from, node_to)
+
+        node_from = node_to
+
+
+def clean_graph(g: AssemblyGraph, max_tip_len: int=4):
+    """Clean the graph a bit.
+
+    This function removes short "tips": paths which start at junction or a node
+    without incoming edges, ends in a node without any outgoing edges, and with
+    a length shorter than `max_tip_len`.
+
+    Example::
+
+                       -- vt1 -- vt2
+                     /
+        v0 -- v1 -- v2 -- v3 -- v4 -- v5 -- .. -- vn
+
+    The edges (v2, vt1), (vt1, vt2) will be removed.
+
+    Afterwards, all nodes without incoming or outgoing edges (degree=0) will
+    also be removed from the graph.
+    """
+
+    # Clean short tips
+    tips = [n for n in g if g.out_degree(n) == 0]
+    num_tip_edges = 0
+    for tip in tips:
+        path = [tip]
+        logger.debug("Current path: %s", path)
+        while len(path) <= max_tip_len:
+            curr_node = path[0]
+            pred = g.predecessors(curr_node)
+
+            logger.debug("Predecessors: %s", pred)
+
+            if len(pred) == 1:
+                # Exactly one predecessor, extend the path
+                path.insert(0, pred[0])
+
+                logger.debug("Predecessor in: %d, out: %d",
+                             g.in_degree(pred[0]), g.out_degree(pred[0]))
+
+                if g.out_degree(pred[0]) != 1:
+                    # This predecessor is a junction, which means the end of
+                    # a tip
+                    break
+            else:
+                # In case of multiple or no predecessors, quit the loop
+                break
+
+        if ((g.in_degree(path[0]) == 0 or g.out_degree(path[0]) > 1) and
+                len(path) > 1):
+            # Path is a tip, remove it
+            logger.debug("Removing tip: %s", path)
+            num_tip_edges += len(path)-1
+
+            g.remove_edges_from(node_path_edges(path))
+
+    # Remove nodes without any edges
+    isolated_nodes = [n for n in g if g.degree(n) == 0]
+    g.remove_nodes_from(isolated_nodes)
+
+    return num_tip_edges, len(isolated_nodes)
