@@ -24,17 +24,17 @@ def partition_graph(g: AssemblyGraph) -> Iterator[Tuple[AssemblyGraph, bool]]:
 
     for connected_component in networkx.strongly_connected_components(g):
         if len(connected_component) == 1:
-            singleton_nodes.append(connected_component[0])
+            singleton_nodes.extend(connected_component)
             continue
 
         subgraph = g.subgraph(connected_component)
         for u, v in g.in_edges_iter(connected_component):
             if u not in subgraph:
-                subgraph.add_edge('r_', str(v))
+                subgraph.add_edge('r_', v)
 
         for u, v in g.out_edges_iter(connected_component):
             if v not in subgraph:
-                subgraph.add_edge(str(u), "re_")
+                subgraph.add_edge(u, "re_")
 
         yield subgraph, False
 
@@ -42,33 +42,35 @@ def partition_graph(g: AssemblyGraph) -> Iterator[Tuple[AssemblyGraph, bool]]:
     subgraph = g.subgraph(singleton_nodes)
     for u, v in g.in_edges_iter(singleton_nodes):
         if u not in subgraph:
-            subgraph.add_edge('r_', str(v))
+            subgraph.add_edge('r_', v)
 
     start_nodes = (n for n in subgraph.nodes_iter()
                    if subgraph.in_degree(n) == 0)
     for n in start_nodes:
-        subgraph.add_edge('r_', str(n))
+        if n == 'r_':
+            continue
+        subgraph.add_edge('r_', n)
 
     for u, v in g.out_edges_iter(singleton_nodes):
         if v not in subgraph:
-            subgraph.add_edge(str(u), 're_')
+            subgraph.add_edge(u, 're_')
 
     yield subgraph, True
 
 
-def is_back_edge(AssemblyGraph, t: networkx.DiGraph, e: Tuple[str, str]):
-    if not t.has_edge(e):
-        u, v = e
-        if v in t.predecessors(u):
+def is_back_edge(t: networkx.DiGraph, e: Tuple[str, str]):
+    u, v = e[:2]
+    if not t.has_edge(u, v):
+        if u in t and v in networkx.ancestors(t, u):
             return True
 
     return False
 
 
 def graph_to_dag(g: AssemblyGraph) -> Tuple[AssemblyGraph, networkx.DiGraph]:
-    """Converts a general directed graph to a directed acyclic graph, by
-    duplicating certain nodes and adding edges in such way that no cycle is
-    created.
+    """Converts a general strongly connected directed graph to a
+    directed acyclic graph, by duplicating certain nodes and adding edges in
+    such way that no cycle is created.
 
     This DAG can be used to identify superbubbles in the original graph, for
     details please refer to the paper by Sung et al. [SUNG2015]_.
@@ -89,6 +91,8 @@ def graph_to_dag(g: AssemblyGraph) -> Tuple[AssemblyGraph, networkx.DiGraph]:
     # edges"
     start_node = 'r_'
     if start_node not in g:
+        # This random chosen root should work because the graph is expected to
+        # be strongly connected
         start_node = random.choice([n for n in g.nodes_iter() if n != 're_'])
 
     dfs_tree = networkx.dfs_tree(g, start_node)
@@ -96,7 +100,7 @@ def graph_to_dag(g: AssemblyGraph) -> Tuple[AssemblyGraph, networkx.DiGraph]:
     # Add nodes, create two nodes for each node in the original graph
     non_artificial_nodes = (n for n in g if n not in {'r_', 're_'})
     for n in non_artificial_nodes:
-        dag.add_node_from([n, n + '*'])
+        dag.add_nodes_from([n, str(n) + '*'])
 
     dag.add_nodes_from(['r_', 're_'])
 
@@ -117,7 +121,7 @@ def graph_to_dag(g: AssemblyGraph) -> Tuple[AssemblyGraph, networkx.DiGraph]:
     if 'r_' not in g:
         start_nodes = (n for n in dag.nodes_iter() if dag.in_degree(n) == 0)
         for n in start_nodes:
-            if n == 'r_':
+            if n == 'r_' or n == 're_':
                 continue
 
             dag.add_edge('r_', n)
@@ -125,7 +129,7 @@ def graph_to_dag(g: AssemblyGraph) -> Tuple[AssemblyGraph, networkx.DiGraph]:
     if 're_' not in g:
         end_nodes = (n for n in dag.nodes_iter() if dag.out_degree(n) == 0)
         for n in end_nodes:
-            if n == 're_':
+            if n == 'r_' or n == 're_':
                 continue
 
             dag.add_edge(n, 're_')
