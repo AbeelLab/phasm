@@ -40,34 +40,13 @@ def reverse_id(node_id):
         return node_id[:-1] + '+'
 
 
-def build_assembly_graph(la_iter: Iterable[LocalAlignment],
-                         max_overhang: int=1000,
-                         overlap_overhang_ratio: float=0.8) -> AssemblyGraph:
+def build_assembly_graph(la_iter: Iterable[LocalAlignment]) -> AssemblyGraph:
     g = AssemblyGraph()
 
     logger.info('Start building assembly graph...')
-    num_contained = 0
-    num_too_large_overhang = 0
 
     for la in la_iter:
         la_type = la.classify()
-
-        if (la_type == AlignmentType.A_CONTAINED or
-                la_type == AlignmentType.B_CONTAINED):
-            logger.debug('Contained overlap: %s', la)
-            num_contained += 1
-            continue
-
-        threshold = min(max_overhang,
-                        la.get_overlap_length()*overlap_overhang_ratio)
-        if la.get_overhang() > threshold:
-            logger.debug("Too much overhang: %d > min(%d, %d). LA: %s",
-                         la.get_overhang(), la.get_overlap_length(),
-                         la.get_overlap_length()*overlap_overhang_ratio,
-                         la)
-            num_too_large_overhang += 1
-
-            continue
 
         aid = la.a.id + "+"
         bid = la.b.id + ("+" if la.strand == Strand.SAME else "-")
@@ -76,12 +55,14 @@ def build_assembly_graph(la_iter: Iterable[LocalAlignment],
 
         if la_type == AlignmentType.OVERLAP_AB:
             g.add_edge(aid, bid, {
-                'weight': la.arange[0] - la.brange[0]
+                'weight': la.arange[0] - la.brange[0],
+                'overlap_len': la.get_overlap_length()
             })
 
             g.add_edge(r_bid, r_aid, {
                 'weight': ((len(la.b) - la.brange[1]) -
-                           (len(la.a) - la.arange[1]))
+                           (len(la.a) - la.arange[1])),
+                'overlap_len': la.get_overlap_length()
             })
 
             logger.debug('Added edge (%s, %s) with weight %d',
@@ -90,12 +71,14 @@ def build_assembly_graph(la_iter: Iterable[LocalAlignment],
                          r_bid, r_aid, g[r_bid][r_aid]['weight'])
         else:
             g.add_edge(bid, aid, {
-                'weight': la.brange[0] - la.arange[0]
+                'weight': la.brange[0] - la.arange[0],
+                'overlap_len': la.get_overlap_length()
             })
 
             g.add_edge(r_aid, r_bid, {
                 'weight': ((len(la.a) - la.arange[1]) -
-                           (len(la.b) - la.brange[1]))
+                           (len(la.b) - la.brange[1])),
+                'overlap_len': la.get_overlap_length()
             })
 
             logger.debug('Added edge (%s, %s) with weight %d',
@@ -106,9 +89,6 @@ def build_assembly_graph(la_iter: Iterable[LocalAlignment],
     logger.info("Built assembly graph with %d nodes and %d edges.",
                 networkx.number_of_nodes(g),
                 networkx.number_of_edges(g))
-    logger.info("Skipped %d contained reads.", num_contained)
-    logger.info("Skipped %d reads with too much overhang.",
-                num_too_large_overhang)
 
     return g
 
@@ -223,8 +203,8 @@ def node_path_edges(nodes):
         node_from = node_to
 
 
-def clean_graph(g: AssemblyGraph, max_tip_len: int=4):
-    """Clean the graph a bit.
+def remove_tips(g: AssemblyGraph, max_tip_len: int=4):
+    """Remove short tips from the assembly graph.
 
     This function removes short "tips": paths which start at junction or a node
     without incoming edges, ends in a node without any outgoing edges, and with
@@ -238,8 +218,8 @@ def clean_graph(g: AssemblyGraph, max_tip_len: int=4):
 
     The edges (v2, vt1), (vt1, vt2) will be removed.
 
-    Afterwards, all nodes without incoming or outgoing edges (degree=0) will
-    also be removed from the graph.
+    Afterwards, it is recommended to delete isolated nodes: nodes without
+    incoming or outgoing edges.
     """
 
     # Clean short tips
@@ -277,8 +257,48 @@ def clean_graph(g: AssemblyGraph, max_tip_len: int=4):
 
             g.remove_edges_from(node_path_edges(path))
 
+    return num_tip_edges
+
+
+def remove_short_overlaps(g: AssemblyGraph, drop_ratio: float,
+                          edge_len: str='weight',
+                          overlap_len: str='overlap_len',
+                          sort: bool=False):
+    if sort:
+        g.sort_adjacency_lists(weight=edge_len)
+
+    junction_nodes = (n for n in g.nodes_iter() if g.out_degree(n) > 1)
+
+    for v in junction_nodes:
+        v_neighbours = g[v]
+
+        max_ovl = max(w[overlap_len] for w in v_neighbours.values())
+        _, shortest_edge_target, shortest_edge_ovl = next(
+            g.edges_iter(v, data=overlap_len))
+
+        if max_ovl != shortest_edge_ovl:
+            continue
+
+        threshold = int(round(max_ovl * drop_ratio))
+
+        # Longest edges first (higher chance of short overlap)
+        for w, data in reversed(v_neighbours.items()):
+            if w == shortest_edge_target:
+                # Don't remove the shortest edge
+                break
+
+            if data[overlap_len] < threshold:
+                # Remove this edge
+                yield (v, w)
+            else:
+                break
+
+
+def clean_graph(g: AssemblyGraph):
+    """This function cleans the graph by removing any isolated nodes."""
+
     # Remove nodes without any edges
     isolated_nodes = [n for n in g if g.degree(n) == 0]
     g.remove_nodes_from(isolated_nodes)
 
-    return num_tip_edges, len(isolated_nodes)
+    return len(isolated_nodes)

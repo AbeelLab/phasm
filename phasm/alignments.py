@@ -1,6 +1,12 @@
 import enum
 from typing import List, Tuple, NamedTuple
 
+import parasail
+
+from phasm.utils import round_up
+
+dna_matrix = parasail.create_matrix("ACTG", 1, -3)
+
 
 class Strand(enum.IntEnum):
     SAME = 0
@@ -65,38 +71,42 @@ class LocalAlignment(_LocalAlignment):
         else:
             return AlignmentType.OVERLAP_BA
 
+    def get_alignment(self, trace_point_d: int=100):
+        raise NotImplemented
+
+        if not self.tracepoints:
+            raise ValueError(
+                "No tracepoints available for alignment '{}'".format(self))
+
+        a_start = self.arange[0]
+        a_end = round_up(self.arange[0], trace_point_d)
+
+        alignment = []
+        if a_start != 0:
+            alignment.append("-" * a_start)
+
+        for tp in self.tracepoints:
+            b_start = self.brange[0]
+            b_end = self.brange + tp[1]
+
+            parasail.sw_table_striped_16(
+                self.a.sequence[a_start:a_end], self.b.sequence[b_start:b_end],
+                5, 2, dna_matrix
+            )
+
     def __len__(self):
         return self.get_overlap_length()
 
 
-def min_overlap_length(min_length: int):
-    """Factory to generate a filter function which ignores all local alignments
-    with a smaller overlap length than `min_length`.
+class Pile:
+    def __init__(self, a: Read):
+        self.a = a
+        self.alignments = []
 
-    To be used with Python's builtin `filter` function, and some iterable which
-    outputs `LocalAlignment`s.
+    def add_alignment(self, alignment: LocalAlignment):
+        assert alignment.a == self.a
 
-    .. seealso:: LocalAlignment, max_differences, max_error_rate"""
+        self.alignments.append(alignment)
 
-    def la_filter(la: LocalAlignment) -> bool:
-        return la.get_overlap_length() >= min_length
-
-    return la_filter
-
-
-def max_differences(max_diff: int):
-    """Factory function to create a filter function which ignores all local
-    alignments with more differences than `max_diff`."""
-    def la_filter(la: LocalAlignment) -> bool:
-        return la.differences <= max_diff
-
-    return la_filter
-
-
-def max_error_rate(max_err: float):
-    """Factory function to create a filter function which ignores all local
-    alignments with a higher error rate than `max_error_rate`."""
-    def la_filter(la: LocalAlignment) -> bool:
-        return la.get_error_rate() <= max_err
-
-    return la_filter
+    def perform_msa(self, trace_point_d=100):
+        pass
