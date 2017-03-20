@@ -1,12 +1,6 @@
 import enum
 from typing import List, Tuple, NamedTuple
 
-import parasail
-
-from phasm.utils import round_up
-
-dna_matrix = parasail.create_matrix("ACTG", 1, -3)
-
 
 class Strand(enum.IntEnum):
     SAME = 0
@@ -71,42 +65,5 @@ class LocalAlignment(_LocalAlignment):
         else:
             return AlignmentType.OVERLAP_BA
 
-    def get_alignment(self, trace_point_d: int=100):
-        raise NotImplemented
-
-        if not self.tracepoints:
-            raise ValueError(
-                "No tracepoints available for alignment '{}'".format(self))
-
-        a_start = self.arange[0]
-        a_end = round_up(self.arange[0], trace_point_d)
-
-        alignment = []
-        if a_start != 0:
-            alignment.append("-" * a_start)
-
-        for tp in self.tracepoints:
-            b_start = self.brange[0]
-            b_end = self.brange + tp[1]
-
-            parasail.sw_table_striped_16(
-                self.a.sequence[a_start:a_end], self.b.sequence[b_start:b_end],
-                5, 2, dna_matrix
-            )
-
     def __len__(self):
         return self.get_overlap_length()
-
-
-class Pile:
-    def __init__(self, a: Read):
-        self.a = a
-        self.alignments = []
-
-    def add_alignment(self, alignment: LocalAlignment):
-        assert alignment.a == self.a
-
-        self.alignments.append(alignment)
-
-    def perform_msa(self, trace_point_d=100):
-        pass
