@@ -90,7 +90,7 @@ class BaseRangeQueryDP:
         j = min(j, len(self.array))
 
         k = numpy.zeros((2,), dtype=numpy.int32)
-        values = numpy.zeros((2,), dtype=numpy.int32)
+        values = numpy.zeros((2,))
 
         l = int(numpy.log2(j - i))
         col = max(0, l-1)
@@ -178,7 +178,7 @@ class BaseRangeQuery:
             # blocks, calculate using naive method
             return i + self.argfunc(self.array[i:j])
         else:
-            k = numpy.zeros((3,))
+            k = numpy.zeros((3,), dtype=numpy.int32)
             values = numpy.zeros((3,))
 
             le = (left_boundary+1) * self.block_size
