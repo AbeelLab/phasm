@@ -1,8 +1,9 @@
 import logging
+
 import networkx
 import pytest  # noqa
 
-from phasm.bubbles import partition_graph, graph_to_dag
+from phasm.bubbles import partition_graph, graph_to_dag, SuperBubbleFinderDAG
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -22,6 +23,36 @@ def get_test_graph():
         ("5", "6"),
         ("6", "7"),
         ("7", "8")
+    ])
+
+    return g
+
+
+def get_test_graph2():
+    g = networkx.DiGraph()
+
+    g.add_edges_from([
+        ("1", "2"),
+        ("1", "3"),
+        ("2", "3"),
+        ("3", "4"),
+        ("3", "5"),
+        ("3", "11"),
+        ("4", "8"),
+        ("5", "6"),
+        ("5", "9"),
+        ("6", "7"),
+        ("6", "10"),
+        ("7", "8"),
+        ("8", "13"),
+        ("8", "14"),
+        ("9", "10"),
+        ("10", "7"),
+        ("11", "12"),
+        ("12", "8"),
+        ("13", "14"),
+        ("13", "15"),
+        ("15", "14")
     ])
 
     return g
@@ -89,3 +120,16 @@ def test_graph_to_dag():
         logger.debug("DFS edges: %s", dfs_tree.edges())
 
         assert networkx.is_directed_acyclic_graph(dag)
+
+
+def test_find_superbubble_finder_dag():
+    g = get_test_graph2()
+    superbubbles = SuperBubbleFinderDAG(g)
+
+    superbubble_set = set(iter(superbubbles))
+    assert superbubble_set == {
+        ('8', '14'), ('3', '8'), ('11', '12'), ('5', '7'), ('1', '3')}
+
+
+if __name__ == '__main__':
+    test_find_superbubble_finder_dag()

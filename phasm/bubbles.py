@@ -3,18 +3,31 @@ Identify superbubbles in an assembly graph.
 """
 
 import random
-from typing import Iterator, Tuple
+from enum import Enum
+from typing import Iterator, Tuple, Hashable, NamedTuple
 
 import networkx
 
 from phasm.assembly_graph import AssemblyGraph
+from phasm.rmq import RangeMinimumQuery, RangeMaximumQuery
+
+Node = Hashable
+
+
+class CandidateType(Enum):
+    ENTRANCE = 1
+    EXIT = 2
+
+
+Candidate = NamedTuple('Candidate', [
+    ('v', Node), ('type', CandidateType)])
 
 
 def partition_graph(g: AssemblyGraph) -> Iterator[Tuple[AssemblyGraph, bool]]:
-    """This function partitions a directed graph into a set of directed acyclic
-    subgraphs. It is partioned in such way that the set of super bubbles of `g`
-    is the same as the union of the super bubble sets of all subgraphs returned
-    by this function.
+    """This function partitions a directed graph into a set of subgraphs. It
+    is partioned in such way that the set of super bubbles of `g` is the same
+    as the union of the super bubble sets of all subgraphs returned by this
+    function.
 
     This function yields each partitioned subgraph, together with a flag if
     it is acyclic or not.
@@ -58,7 +71,7 @@ def partition_graph(g: AssemblyGraph) -> Iterator[Tuple[AssemblyGraph, bool]]:
     yield subgraph, True
 
 
-def is_back_edge(t: networkx.DiGraph, e: Tuple[str, str]):
+def is_back_edge(t: networkx.DiGraph, e: Tuple[Node, Node]):
     u, v = e[:2]
     if not t.has_edge(u, v):
         if u in t and v in networkx.ancestors(t, u):
@@ -98,6 +111,7 @@ def graph_to_dag(g: AssemblyGraph) -> Tuple[AssemblyGraph, networkx.DiGraph]:
     dfs_tree = networkx.dfs_tree(g, start_node)
 
     # Add nodes, create two nodes for each node in the original graph
+    # Duplicated nodes are marked with an *
     non_artificial_nodes = (n for n in g if n not in {'r_', 're_'})
     for n in non_artificial_nodes:
         dag.add_nodes_from([n, str(n) + '*'])
@@ -135,3 +149,162 @@ def graph_to_dag(g: AssemblyGraph) -> Tuple[AssemblyGraph, networkx.DiGraph]:
             dag.add_edge(n, 're_')
 
     return dag, dfs_tree
+
+
+class SuperBubbleFinderDAG:
+    """Identifies and reports all superbubbles in a directed acyclic graph.
+
+    Based on the O(|V| + |E|)-algorithm by Brankovic et al. [BRANKOVIC2015]_.
+
+    .. [BRANKOVIC2015] Brankovic, L., Iliopoulos, C. S., Kundu, R.,
+                       Mohamed, M., Pissis, S. P., & Vayani, F. (2015).
+                       Linear-Time Superbubble Identification Algorithm for
+                       Genome Assembly. arXiv. Retrieved from
+                       http://arxiv.org/abs/1505.04019
+    """
+
+    def __init__(self, g: AssemblyGraph):
+        self.g = g
+        self.topo_sorted = networkx.topological_sort(g)
+        self.ordering = {
+            v: i for i, v in enumerate(self.topo_sorted)
+        }
+
+        # Prepare arrays for minimum/maximum query in a range
+        # (Range minimum/maximum query problem)
+        self.out_parent = [
+            min(self.ordering[p]
+                for p in g.predecessors_iter(self.topo_sorted[i]))
+            if g.in_degree(self.topo_sorted[i]) else 2**32 - 1
+            for i in range(len(self.topo_sorted))
+        ]
+        self.out_parent_rmq = RangeMinimumQuery(self.out_parent)
+
+        self.out_child = [
+            max(self.ordering[p] for p in g.neighbors_iter(
+                self.topo_sorted[i]))
+            if g.out_degree(self.topo_sorted[i]) > 0 else -1
+            for i in range(len(self.topo_sorted))
+        ]
+        self.out_child_rmq = RangeMaximumQuery(self.out_child)
+
+        self.previous_entrance = {}  # type: Dict[Node, Node]
+        self.alternative_entrance = {}  # type: Dict[Node, Node]
+
+        # Build candidates
+        self.candidates = []  # type: List[Candidate]
+        self.v_to_candidate_index = {}  # type: Dict[Node, int]
+
+        # Keep track of the last seen entrance in the candidates list, used to
+        # fill the previous_entrance dictionary
+        prev_entr = None
+
+        for v in self.topo_sorted:
+            self.alternative_entrance[v] = None
+            self.previous_entrance[v] = prev_entr
+
+            if self._is_exit(v):
+                self.v_to_candidate_index[v] = len(self.candidates)
+                self.candidates.append(Candidate(v, CandidateType.EXIT))
+
+            if self._is_entrance(v):
+                # Only keep entrance index if both exit and entrance
+                self.v_to_candidate_index[v] = len(self.candidates)
+                self.candidates.append(Candidate(v, CandidateType.ENTRANCE))
+                prev_entr = v
+
+    def _is_entrance(self, v: Node):
+        for n in self.g.neighbors_iter(v):
+            if self.g.in_degree(n) == 1:
+                return True
+
+        return False
+
+    def _is_exit(self, v: Node):
+        for n in self.g.predecessors_iter(v):
+            if self.g.out_degree(n) == 1:
+                return True
+
+        return False
+
+    def __iter__(self):
+        print(self.candidates)
+        while self.candidates:
+            if self.candidates[-1].type == CandidateType.ENTRANCE:
+                self.candidates.pop()
+            else:
+                yield from self._check_candidates(0, len(self.candidates)-1)
+
+    def _check_candidates(self, start_index: int, end_index: int):
+        start = self.candidates[start_index].v
+        exit = self.candidates[end_index].v
+
+        if (not start or not exit or self.ordering[start] >=
+                self.ordering[exit]):
+            self.candidates.pop()
+            return
+
+        possible_start = self.previous_entrance[exit]
+        valid = None
+        while self.ordering[possible_start] >= self.ordering[start]:
+            valid = self._validate_superbubble(possible_start, exit)
+            if not valid:
+                break
+
+            if (valid == possible_start or valid ==
+                    self.alternative_entrance[possible_start]):
+                break
+
+            self.alternative_entrance[possible_start] = valid
+            possible_start = valid
+
+        self.candidates.pop()
+        if possible_start == valid:
+            # At this point we have found a correct superbubble entrance-exit
+            # pair
+            yield (possible_start, exit)
+
+            # Check for nested superbubbles
+            while self.candidates[-1].v != possible_start:
+                if self.candidates[-1].type == CandidateType.EXIT:
+                    yield from self._check_candidates(
+                        self.v_to_candidate_index[possible_start]+1,
+                        len(self.candidates)-1)
+                else:
+                    self.candidates.pop()
+
+    def _validate_superbubble(self, start_v: Node, exit_v: Node):
+        start = self.ordering[start_v]
+        exit = self.ordering[exit_v]
+
+        outchild_idx = self.out_child_rmq.query(start, exit)
+        outchild_ord = self.out_child[outchild_idx]
+
+        outparent_idx = self.out_parent_rmq.query(start+1, exit+1)
+        outparent_ord = self.out_parent[outparent_idx]
+
+        if outchild_ord != exit:
+            return None
+
+        if outparent_ord == start:
+            return start_v
+
+        outparent_v = self.topo_sorted[outparent_ord]
+        if outparent_v in self.v_to_candidate_index:
+            outparent_can = self.candidates[
+                self.v_to_candidate_index[outparent_v]]
+            if outparent_can.type == CandidateType.ENTRANCE:
+                return outparent_v
+
+        return self.previous_entrance[outparent_v]
+
+
+def find_superbubbles(g: AssemblyGraph):
+    for partition, acyclic in partition_graph(g):
+        if acyclic:
+            superbubble_finder = SuperBubbleFinderDAG(partition)
+            yield from (b for b in superbubble_finder if 'r_' not in b
+                        and 're_' not in b)
+        else:
+            dag, dfs_tree = graph_to_dag(partition)
+
