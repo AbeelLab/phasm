@@ -39,5 +39,5 @@ setup(
         'networkx>=1.9',
     ],
     setup_requires=['pytest-runner'],
-    test_requires=['pytest']
+    test_requires=['pytest', 'pytest-cov']
 )
