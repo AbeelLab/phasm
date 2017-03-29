@@ -80,6 +80,14 @@ def is_back_edge(t: networkx.DiGraph, e: Tuple[Node, Node]):
     return False
 
 
+def _is_duplicated(g, node):
+    return node in g and 'original' in g.node[node]
+
+
+def _duplicated_id(node):
+    return str(node) + '*'
+
+
 def graph_to_dag(g: AssemblyGraph) -> Tuple[AssemblyGraph, networkx.DiGraph]:
     """Converts a general strongly connected directed graph to a
     directed acyclic graph, by duplicating certain nodes and adding edges in
@@ -114,7 +122,8 @@ def graph_to_dag(g: AssemblyGraph) -> Tuple[AssemblyGraph, networkx.DiGraph]:
     # Duplicated nodes are marked with an *
     non_artificial_nodes = (n for n in g if n not in {'r_', 're_'})
     for n in non_artificial_nodes:
-        dag.add_nodes_from([n, str(n) + '*'])
+        dag.add_node(n)
+        dag.add_node(_duplicated_id(n), original=n)
 
     dag.add_nodes_from(['r_', 're_'])
 
@@ -228,7 +237,6 @@ class SuperBubbleFinderDAG:
         return False
 
     def __iter__(self):
-        print(self.candidates)
         while self.candidates:
             if self.candidates[-1].type == CandidateType.ENTRANCE:
                 self.candidates.pop()
@@ -300,6 +308,22 @@ class SuperBubbleFinderDAG:
 
 
 def find_superbubbles(g: AssemblyGraph):
+    """Find superbubbles in a general directed graph.
+
+    This algorithm first partitions the graph into several subgraphs,
+    converts each subgraph to a DAG if necessary, and then finds superbubbles
+    in this constructed DAG. The partitioning and DAG construction happens in
+    such a way that superbubbles in the original graph can be easily found.
+
+    For more details please refer to the paper by Sung et al. [SUNG2015]_.
+
+    .. [SUNG2015] Wing-Kin Sung, Sadakane, K., Shibuya, T., Belorkar, A., &
+                  Pyrogova, I. (2015). An O(m log m)-Time Algorithm for
+                  Detecting Superbubbles. IEEE/ACM Transactions on
+                  Computational Biology and Bioinformatics, 12(4), 770–777.
+                  http://doi.org/10.1109/TCBB.2014.2385696
+    """
+
     for partition, acyclic in partition_graph(g):
         if acyclic:
             superbubble_finder = SuperBubbleFinderDAG(partition)
@@ -307,4 +331,32 @@ def find_superbubbles(g: AssemblyGraph):
                         and 're_' not in b)
         else:
             dag, dfs_tree = graph_to_dag(partition)
+            superbubble_finder = SuperBubbleFinderDAG(dag)
 
+            superbubbles = set(iter(superbubble_finder))
+
+            # The graph_to_dag algorithm duplicates nodes, so we have to filter
+            # some reported superbubbles out
+            for s, t in superbubbles:
+                # Ignore any superbubble involving artificial roots and sinks
+                if s == 'r_' or t == 're_':
+                    continue
+
+                if _is_duplicated(g, s) and _is_duplicated(g, t):
+                    orig_s = g.node[s]['original']
+                    orig_t = g.node[t]['original']
+
+                    if (orig_s, orig_t) in superbubbles:
+                        # (s, t) and (s*, t*) are both reported as
+                        # superbubbles, so this is a valid bubble
+                        yield orig_s, orig_t
+                elif not _is_duplicated(g, s) and not _is_duplicated(g, t):
+                    if (_duplicated_id(s), _duplicated_id(t)) in superbubbles:
+                        # (s, t) and (s*, t*) are both reported as
+                        # superbubbles, so this is a valid bubble
+                        yield s, t
+                elif not _is_duplicated(g, s) and _is_duplicated(g, t):
+                    orig_t = g.node[t]['original']
+
+                    # A (s, t*) superbubble is always a valid bubble
+                    yield s, orig_t

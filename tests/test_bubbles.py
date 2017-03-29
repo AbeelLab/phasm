@@ -3,7 +3,8 @@ import logging
 import networkx
 import pytest  # noqa
 
-from phasm.bubbles import partition_graph, graph_to_dag, SuperBubbleFinderDAG
+from phasm.bubbles import (partition_graph, graph_to_dag, SuperBubbleFinderDAG,
+                           find_superbubbles)
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -129,6 +130,15 @@ def test_find_superbubble_finder_dag():
     superbubble_set = set(iter(superbubbles))
     assert superbubble_set == {
         ('8', '14'), ('3', '8'), ('11', '12'), ('5', '7'), ('1', '3')}
+
+
+def test_find_superbubbles():
+    g = get_test_graph()
+    logger = logging.getLogger('find_superbubbles')
+
+    superbubbles = set(iter(find_superbubbles(g)))
+    logger.debug('Found superbubbles %s', superbubbles)
+    assert superbubbles == {("3", "5"), ("7", "8")}
 
 
 if __name__ == '__main__':
