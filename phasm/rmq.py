@@ -130,7 +130,7 @@ class BaseRangeQuery:
     """This is an implementation for the range minimum/maximum query problem
     with O(n) preprocessing time, and answers each query in O(log n) time.
     It is possible to construct an algorithm which has a theoretical constant
-    runtime for answering queries, in practice this was not faster than the
+    runtime for answering queries, but in practice this was not faster than the
     current implementation [FISCHER2006]_.
 
     The linear preprocessing time is obtained by dividing the original array
