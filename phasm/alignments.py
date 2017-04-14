@@ -31,6 +31,30 @@ class Read(_Read):
     def __hash__(self) -> int:
         return hash(self.id)
 
+    def get_oriented_read(self, orientation):
+        return OrientedRead(self, orientation)
+
+
+_OrientedRead = NamedTuple('OrientedRead',
+                           [('read', Read), ('orientation', str)])
+
+
+class OrientedRead(_OrientedRead):
+    def __getattr__(self, key):
+        data = self.read._asdict()
+
+        if key in data:
+            return data[key]
+        else:
+            raise AttributeError("OrientedRead has no attribute '{}'".format(
+                key))
+
+    def __str__(self):
+        return str(self.read) + self.orientation
+
+    def __hash__(self):
+        return hash(str(self.read) + self.orientation)
+
 
 _LocalAlignment = NamedTuple(
     '_LocalAlignment',
@@ -64,6 +88,10 @@ class LocalAlignment(_LocalAlignment):
             return AlignmentType.OVERLAP_AB
         else:
             return AlignmentType.OVERLAP_BA
+
+    def get_oriented_reads(self) -> Tuple[OrientedRead, OrientedRead]:
+        return self.a.get_oriented_read('+'), self.b.get_oriented_read(
+            '+' if self.strand == Strand.SAME else '-')
 
     def __len__(self):
         return self.get_overlap_length()
