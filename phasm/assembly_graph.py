@@ -5,7 +5,7 @@ from collections import defaultdict, OrderedDict
 
 import networkx
 
-from phasm.alignments import LocalAlignment, Strand, AlignmentType
+from phasm.alignments import LocalAlignment, AlignmentType
 
 logger = logging.getLogger(__name__)
 
@@ -29,17 +29,6 @@ class AssemblyGraph(networkx.DiGraph):
             self.adj[v] = OrderedDict(sorted_iter)
 
 
-def reverse_id(node_id):
-    if node_id[-1] not in ["+", "-"]:
-        raise ValueError("An oriented read ID should end with either '+' or "
-                         "'-', got '{}'".format(node_id))
-
-    if node_id[-1] == '+':
-        return node_id[:-1] + '-'
-    else:
-        return node_id[:-1] + '+'
-
-
 def build_assembly_graph(la_iter: Iterable[LocalAlignment]) -> AssemblyGraph:
     g = AssemblyGraph()
 
@@ -47,44 +36,24 @@ def build_assembly_graph(la_iter: Iterable[LocalAlignment]) -> AssemblyGraph:
 
     for la in la_iter:
         la_type = la.classify()
-
-        aid = la.a.id + "+"
-        bid = la.b.id + ("+" if la.strand == Strand.SAME else "-")
-        r_aid = reverse_id(aid)
-        r_bid = reverse_id(bid)
+        a_node, b_node = la.get_oriented_reads()
 
         if la_type == AlignmentType.OVERLAP_AB:
-            g.add_edge(aid, bid, {
+            g.add_edge(a_node, b_node, {
                 'weight': la.arange[0] - la.brange[0],
                 'overlap_len': la.get_overlap_length()
             })
 
-            g.add_edge(r_bid, r_aid, {
-                'weight': ((len(la.b) - la.brange[1]) -
-                           (len(la.a) - la.arange[1])),
-                'overlap_len': la.get_overlap_length()
-            })
-
             logger.debug('Added edge (%s, %s) with weight %d',
-                         aid, bid, g[aid][bid]['weight'])
-            logger.debug('Added edge (%s, %s) with weight %d',
-                         r_bid, r_aid, g[r_bid][r_aid]['weight'])
-        else:
-            g.add_edge(bid, aid, {
+                         a_node, b_node, g[a_node][b_node]['weight'])
+        elif la_type == AlignmentType.OVERLAP_BA:
+            g.add_edge(b_node, a_node, {
                 'weight': la.brange[0] - la.arange[0],
                 'overlap_len': la.get_overlap_length()
             })
 
-            g.add_edge(r_aid, r_bid, {
-                'weight': ((len(la.a) - la.arange[1]) -
-                           (len(la.b) - la.brange[1])),
-                'overlap_len': la.get_overlap_length()
-            })
-
             logger.debug('Added edge (%s, %s) with weight %d',
-                         bid, aid, g[bid][aid]['weight'])
-            logger.debug('Added edge (%s, %s) with weight %d',
-                         r_aid, r_bid, g[r_aid][r_bid]['weight'])
+                         b_node, a_node, g[b_node][a_node]['weight'])
 
     logger.info("Built assembly graph with %d nodes and %d edges.",
                 networkx.number_of_nodes(g),
