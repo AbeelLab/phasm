@@ -28,6 +28,19 @@ class AlignmentFilter(metaclass=ABCMeta):
         pass
 
 
+class MinReadLength(AlignmentFilter):
+    """Factory to generate a filter function which ignores all local alignments
+    if one of the reads is shorter than the given minimum read length."""
+
+    def __init__(self, min_read_length: int):
+        super().__init__()
+        self.min_read_length = min_read_length
+
+    def filter(self, la: LocalAlignment):
+        return (len(la.a) >= self.min_read_length and
+                len(la.b) >= self.min_read_length)
+
+
 class MinOverlapLength(AlignmentFilter):
     """Factory to generate a filter function which ignores all local alignments
     with a smaller overlap length than `min_length`.
