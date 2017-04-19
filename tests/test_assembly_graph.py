@@ -39,6 +39,7 @@ def test_transitive_reduction():
 
     g.add_edges_from([
         ('v2', 'v4', {'weight': 3}),
+        ('v8', 'v10', {'weight': 3}),
         ('v8', 'v11', {'weight': 5})
     ])
 
@@ -48,6 +49,6 @@ def test_transitive_reduction():
     edges = set(g.edges())
 
     assert ('v2', 'v4') not in edges
-    assert ('v8', 'v11') in edges
+    assert ('v8', 'v11') not in edges
 
-    assert len(edges_to_remove) == 1
+    assert len(edges_to_remove) == 3
