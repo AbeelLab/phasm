@@ -8,8 +8,9 @@ import networkx
 from phasm.io import daligner, gfa
 from phasm.assembly_graph import (build_assembly_graph,
                                   remove_transitive_edges, clean_graph,
-                                  remove_tips, remove_short_overlaps)
-from phasm.filter import ContainedReads, MaxOverhang
+                                  remove_tips, remove_short_overlaps,
+                                  make_symmetric, merge_unambiguous_paths)
+from phasm.filter import ContainedReads, MaxOverhang, MinReadLength
 
 logging.basicConfig()
 logger = logging.getLogger()
@@ -40,6 +41,7 @@ if __name__ == '__main__':
 
     # Apply read/alignment filters
     filters = [
+        MinReadLength(5000),
         ContainedReads(),
         MaxOverhang(1000, 0.8)
     ]
@@ -55,22 +57,45 @@ if __name__ == '__main__':
     with open("assembly_graph.gfa", "w") as f:
         gfa.write_graph(f, g)
 
+    num_asymm_edges = 0
     edges_to_remove = remove_transitive_edges(g)
-    logger.info("Removing %d edges...", len(edges_to_remove))
+    logger.info("Removing %d transitive edges...", len(edges_to_remove))
     g.remove_edges_from(edges_to_remove)
+    num_asymm_edges += make_symmetric(g)
 
     logger.info("Removing tips...")
-    num_tip_edges = remove_tips(g)
+    num_in_tips, num_out_tips = remove_tips(g)
+    num_asymm_edges += make_symmetric(g)
 
-    # logger.info("Removing short overlaps...")
-    # short_overlap_edges = list(remove_short_overlaps(g, 0.7))
-    # g.remove_edges_from(short_overlap_edges)
-    short_overlap_edges = []
+    logger.info("Removing short overlaps...")
 
+    num_short_overlaps = 0
+    for ratio in [0.5, 0.6, 0.7]:
+        short_overlap_edges = list(remove_short_overlaps(g, ratio))
+        g.remove_edges_from(short_overlap_edges)
+        num_short_overlaps += len(short_overlap_edges)
+
+    num_asymm_edges += make_symmetric(g)
+
+    logger.info("Removing isolated nodes...")
     num_isolated_nodes = clean_graph(g)
 
-    logger.info("Removed %d tip edges, %d short overlaps, %d isolated nodes.",
-                num_tip_edges, len(short_overlap_edges), num_isolated_nodes)
+    logger.info("Removed %d tip edges, %d short overlaps, %d isolated nodes, "
+                "%d asymmetric edges.",
+                num_in_tips+num_out_tips, num_short_overlaps,
+                num_isolated_nodes, num_asymm_edges)
+
+    logger.info("Removing tips (stage 2)...")
+    num_in_tips, num_out_tips = remove_tips(g)
+    num_asymm_edges = make_symmetric(g)
+    num_isolated_nodes = clean_graph(g)
+    logger.info("Removed %d tip edges, %d isolated nodes, "
+                "%d asymmetric edges.", num_in_tips+num_out_tips,
+                num_isolated_nodes, num_asymm_edges)
+
+    logger.info("Merging unambiguous paths...")
+    num_nodes_merged = merge_unambiguous_paths(g)
+    logger.info("Merged %d nodes.", num_nodes_merged)
 
     logger.info("Done.")
     logger.info("%d/%d nodes have in-degree 1",
@@ -82,3 +107,5 @@ if __name__ == '__main__':
 
     with open("assembly_graph_reduced.gfa", "w") as f:
         gfa.write_graph(f, g)
+
+    networkx.write_graphml(g, "assembly_graph_reduced.graphml")
