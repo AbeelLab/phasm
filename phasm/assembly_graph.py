@@ -190,8 +190,8 @@ def node_path_edges(nodes):
         node_from = node_to
 
 
-def remove_tips(g: AssemblyGraph, max_tip_len: int=4):
-    """Remove short tips from the assembly graph.
+def remove_outgoing_tips(g: AssemblyGraph, max_tip_len: int=5):
+    """Remove short outgoing tips from the assembly graph.
 
     This function removes short "tips": paths which start at junction or a node
     without incoming edges, ends in a node without any outgoing edges, and with
@@ -199,9 +199,9 @@ def remove_tips(g: AssemblyGraph, max_tip_len: int=4):
 
     Example::
 
-                       -- vt1 -- vt2
+                       -> vt1 -> vt2
                      /
-        v0 -- v1 -- v2 -- v3 -- v4 -- v5 -- .. -- vn
+        v0 -> v1 -> v2 -> v3 -> v4 -> v5 -- .. -> vn
 
     The edges (v2, vt1), (vt1, vt2) will be removed.
 
@@ -209,35 +209,31 @@ def remove_tips(g: AssemblyGraph, max_tip_len: int=4):
     incoming or outgoing edges.
     """
 
-    # Clean short tips
+    # Clean short tips in outgoing direction
     tips = [n for n in g if g.out_degree(n) == 0]
     num_tip_edges = 0
     for tip in tips:
+        is_tip = True
+
+        if g.in_degree(tip) != 1:
+            continue
+
         path = [tip]
-        logger.debug("Current path: %s", path)
-        while len(path) <= max_tip_len:
-            curr_node = path[0]
-            pred = g.predecessors(curr_node)
+        curr_node = tip
+        prev = g.predecessors(tip)[0]
+        while g.in_degree(curr_node) == 1 and g.out_degree(curr_node) <= 1:
+            path.insert(0, prev)
 
-            logger.debug("Predecessors: %s", pred)
+            curr_node = prev
+            prev = (g.predecessors(curr_node)[0] if g.in_degree(curr_node) > 0
+                    else None)
 
-            if len(pred) == 1:
-                # Exactly one predecessor, extend the path
-                path.insert(0, pred[0])
-
-                logger.debug("Predecessor in: %d, out: %d",
-                             g.in_degree(pred[0]), g.out_degree(pred[0]))
-
-                if g.out_degree(pred[0]) != 1:
-                    # This predecessor is a junction, which means the end of
-                    # a tip
-                    break
-            else:
-                # In case of multiple or no predecessors, quit the loop
+            logger.debug("Current path: %s", path)
+            if len(path) > max_tip_len+1:
+                is_tip = False
                 break
 
-        if ((g.in_degree(path[0]) == 0 or g.out_degree(path[0]) > 1) and
-                len(path) > 1):
+        if is_tip:
             # Path is a tip, remove it
             logger.debug("Removing tip: %s", path)
             num_tip_edges += len(path)-1
@@ -245,6 +241,70 @@ def remove_tips(g: AssemblyGraph, max_tip_len: int=4):
             g.remove_edges_from(node_path_edges(path))
 
     return num_tip_edges
+
+
+def remove_incoming_tips(g: AssemblyGraph, max_tip_len: int=5):
+    """Remove short incoming tips from the assembly graph.
+
+    This function removes short "tips": paths which start at junction or a node
+    without incoming edges, ends in a node without any outgoing edges, and with
+    a length shorter than `max_tip_len`.
+
+    Example::
+
+                vt1 -> vt2 ----\
+                                V
+        v0 -> v1 -> v2 -> v3 -> v4 -> v5 -- .. -> vn
+
+    The edges (vt1, vt2), (vt2, v4) will be removed.
+
+    Afterwards, it is recommended to delete isolated nodes: nodes without
+    incoming or outgoing edges.
+    """
+
+    # Clean short tips in outgoing direction
+    tips = [n for n in g if g.in_degree(n) == 0]
+    num_tip_edges = 0
+    for tip in tips:
+        is_tip = True
+
+        if g.out_degree(tip) != 1:
+            continue
+
+        path = [tip]
+        curr_node = tip
+        neighbour = g.neighbors(tip)[0]
+        while g.out_degree(curr_node) == 1 and g.in_degree(curr_node) <= 1:
+            path.append(neighbour)
+
+            curr_node = neighbour
+            neighbour = (g.neighbors(curr_node)[0] if
+                         g.out_degree(curr_node) > 0 else None)
+
+            if len(path) > max_tip_len+1:
+                is_tip = False
+                break
+
+        if is_tip:
+            # Path is a tip, remove it
+            logger.debug("Removing tip: %s", path)
+            num_tip_edges += len(path)-1
+
+            g.remove_edges_from(node_path_edges(path))
+
+    return num_tip_edges
+
+
+def remove_tips(g: AssemblyGraph, max_tip_len: int=5):
+    """Remove both small incoming and outgoing tips.
+
+    .. seealso:: remove_incoming_tips, remove_outgoing_tips
+    """
+
+    num_incoming_tips = remove_incoming_tips(g, max_tip_len)
+    num_outgoing_tips = remove_outgoing_tips(g, max_tip_len)
+
+    return num_incoming_tips, num_outgoing_tips
 
 
 def remove_short_overlaps(g: AssemblyGraph, drop_ratio: float,

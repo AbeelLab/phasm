@@ -7,25 +7,56 @@ from phasm.assembly_graph import (AssemblyGraph, remove_tips, node_path_edges,
 def test_tip_removal():
     g = AssemblyGraph()
     g.add_edges_from(node_path_edges(['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7',
-                                      'v8', 'v9']))
+                                      'v8', 'v9', 'v10', 'v11', 'v12', 'v13',
+                                      'v14', 'v15']))
 
     g.add_edges_from([
-        ('v2', 'vt1'),
+        ('v5', 'vt1'),
         ('vt1', 'vt2'),
         ('vt2', 'vt3')
     ])
 
-    num_tip_edges = remove_tips(g)
+    num_incoming, num_outgoing = remove_tips(g, 3)
     num_isolated_nodes = clean_graph(g)
 
     edges = set(g.edges())
-    assert ('v2', 'vt1') not in edges
+    assert ('v5', 'vt1') not in edges
     assert ('vt1', 'vt2') not in edges
     assert ('vt2', 'vt3') not in edges
 
+    assert ('v1', 'v2') in edges
     assert ('v8', 'v9') in edges
+    assert ('v14', 'v15') in edges
 
-    assert num_tip_edges == 3
+    assert num_incoming == 0
+    assert num_outgoing == 3
+    assert num_isolated_nodes == 3
+
+    g = AssemblyGraph()
+    g.add_edges_from(node_path_edges(['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7',
+                                      'v8', 'v9', 'v10', 'v11', 'v12', 'v13',
+                                      'v14', 'v15']))
+
+    g.add_edges_from([
+        ('vt1', 'vt2'),
+        ('vt2', 'vt3'),
+        ('vt3', 'v6')
+    ])
+
+    num_incoming, num_outgoing = remove_tips(g, 3)
+    num_isolated_nodes = clean_graph(g)
+
+    edges = set(g.edges())
+    assert ('vt1', 'vt2') not in edges
+    assert ('vt2', 'vt3') not in edges
+    assert ('vt3', 'v6') not in edges
+
+    assert ('v1', 'v2') in edges
+    assert ('v8', 'v9') in edges
+    assert ('v14', 'v15') in edges
+
+    assert num_incoming == 3
+    assert num_outgoing == 0
     assert num_isolated_nodes == 3
 
 
