@@ -4,7 +4,8 @@ Identify superbubbles in an assembly graph.
 
 import random
 from enum import Enum
-from typing import Iterator, Tuple, Hashable, NamedTuple
+from typing import Iterator, Tuple, Hashable, NamedTuple, Set
+from collections import deque
 
 import networkx
 
@@ -12,6 +13,7 @@ from phasm.assembly_graph import AssemblyGraph
 from phasm.rmq import RangeMinimumQuery, RangeMaximumQuery
 
 Node = Hashable
+Bubble = Tuple[Node, Node]
 
 
 class CandidateType(Enum):
@@ -57,14 +59,14 @@ def partition_graph(g: AssemblyGraph) -> Iterator[Tuple[AssemblyGraph, bool]]:
         if u not in subgraph:
             subgraph.add_edge('r_', v)
 
-    start_nodes = (n for n in subgraph.nodes_iter()
-                   if subgraph.in_degree(n) == 0)
+    start_nodes = [n for n in subgraph.nodes_iter()
+                   if subgraph.in_degree(n) == 0]
     for n in start_nodes:
         if n == 'r_':
             continue
         subgraph.add_edge('r_', n)
 
-    for u, v in g.out_edges_iter(singleton_nodes):
+    for u, v in g.out_edges(singleton_nodes):
         if v not in subgraph:
             subgraph.add_edge(u, 're_')
 
@@ -307,7 +309,7 @@ class SuperBubbleFinderDAG:
         return self.previous_entrance[outparent_v]
 
 
-def find_superbubbles(g: AssemblyGraph):
+def find_superbubbles(g: AssemblyGraph) -> Iterator[Bubble]:
     """Find superbubbles in a general directed graph.
 
     This algorithm first partitions the graph into several subgraphs,
@@ -360,3 +362,21 @@ def find_superbubbles(g: AssemblyGraph):
 
                     # A (s, t*) superbubble is always a valid bubble
                     yield s, orig_t
+
+
+def superbubble_nodes(g: AssemblyGraph, source: Node,
+                      sink: Node) -> Set[Node]:
+    """Find all nodes inside a superbubble."""
+
+    queue = deque([source])
+    visited = set([source, sink])
+
+    while queue:
+        current = queue.popleft()
+
+        for neighbour in g.neighbors_iter(current):
+            if neighbour not in visited:
+                queue.append(neighbour)
+                visited.add(neighbour)
+
+    return visited
