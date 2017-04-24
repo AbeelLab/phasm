@@ -104,11 +104,23 @@ class ContainedReads(AlignmentFilter):
     .. seealso:: LocalAlignment
     """
 
+    def __init__(self):
+        super().__init__()
+        self.contained_reads = set()
+
     def filter(self, la: LocalAlignment):
         la_type = la.classify()
 
-        return (la_type != AlignmentType.A_CONTAINED and
-                la_type != AlignmentType.B_CONTAINED)
+        if la_type == AlignmentType.A_CONTAINED:
+            self.contained_reads.add(la.a)
+            return False
+        elif la_type == AlignmentType.B_CONTAINED:
+            self.contained_reads.add(la.b)
+            return False
+        elif la.a in self.contained_reads or la.b in self.contained_reads:
+            return False
+
+        return True
 
 
 class MaxOverhang(AlignmentFilter):
