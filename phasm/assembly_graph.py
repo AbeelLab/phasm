@@ -55,7 +55,7 @@ def build_assembly_graph(la_iter: Iterable[LocalAlignment]) -> AssemblyGraph:
                          a_node, b_node, g[a_node][b_node]['weight'])
             logger.debug('Added edge (%s, %s) with weight %d',
                          b_rev, a_rev, g[b_rev][a_rev]['weight'])
-        else:
+        elif la_type == AlignmentType.OVERLAP_BA:
             g.add_edge(b_node, a_node, {
                 'weight': la.brange[0] - la.arange[0],
                 'overlap_len': la.get_overlap_length()
@@ -80,7 +80,7 @@ def build_assembly_graph(la_iter: Iterable[LocalAlignment]) -> AssemblyGraph:
 
 
 def remove_transitive_edges(g: AssemblyGraph, edge_len: str='weight',
-                            length_fuzz: int=10):
+                            length_fuzz: int=1000):
     """This function implements the transitive edge reduction algorithm
     described by Myers (2005) [MYERS2005]_.
 
