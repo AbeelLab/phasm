@@ -49,7 +49,7 @@ def build_haplographs(g: AssemblyGraph,
 
         curr_node = start
         while curr_node:
-            if curr_node in bubbles:
+            if curr_node in bubble_sources:
                 # Start of a superbubble, include all nodes of the superbubble
                 bubble_nodes = superbubble_nodes(g, curr_node,
                                                  bubbles[curr_node])
