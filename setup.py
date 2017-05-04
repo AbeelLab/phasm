@@ -37,7 +37,15 @@ setup(
     # Dependencies
     install_requires=[
         'networkx>=1.9',
+        'numpy>=1.11'
     ],
     setup_requires=['pytest-runner'],
-    test_requires=['pytest', 'pytest-cov']
+    test_requires=['pytest', 'pytest-cov'],
+
+    # Entry points
+    entry_points={
+        'console_scripts': [
+            'phasm-convert = phasm.cli.convert:main'
+        ]
+    }
 )

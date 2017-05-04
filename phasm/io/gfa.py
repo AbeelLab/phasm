@@ -7,7 +7,30 @@ Tools to convert a NetworkX assembly graph to a GFA file.
 
 from typing import TextIO
 
+import gfapy
+
 from phasm.assembly_graph import AssemblyGraph
+
+
+def parse_gfa_line(line: str):
+    return gfapy.Line(line)
+
+
+def gfa_line_to_read(line: gfapy.Line):
+    pass
+
+
+def gfa_line(*args) -> str:
+    return "\t".join(args) + "\n"
+
+
+def gfa_header(version: str="2.0", trace_spacing: int=None) -> str:
+    parts = ["H", "VN:z:{}".format(version)]
+
+    if trace_spacing:
+        parts.append("TS:i:{:d}".format(trace_spacing))
+
+    return gfa_line(*parts)
 
 
 def write_graph(f: TextIO, g: AssemblyGraph, gfa_version: int=1):

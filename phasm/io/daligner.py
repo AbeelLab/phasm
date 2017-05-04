@@ -1,24 +1,32 @@
 """
-This module contains some helper functions to parse data from other sources.
+This module contains some helper functions to parse data from DAZZ_DB and
+DALIGNER.
 """
 
-from typing import Mapping, Iterable
+from typing import Iterable
 
-from phasm.alignments import Read, LocalAlignment, Strand
+import numpy
+
+from phasm.alignments import Strand
 
 
-def parse_reads(input_stream: Iterable[str]) -> Iterable[Read]:
+def full_id(read_data: dict):
+    return "{moviename}/{read_id}/{pulse_start}_{pulse_end}".format(
+        **read_data)
+
+
+def parse_reads(input_stream: Iterable[str]) -> Iterable[dict]:
     """Import read metadata from DAZZ_DB.
 
     Parses read metadata in a DAZZ_DB from an interable `input_stream`,
     which should yield lines of data correesponding to the `DBdump` format
     of DAZZ_DB.
 
-    This function is a generator, and yields each parsed read.
+    This function is a generator, and yields each parsed read as a Python
+    `dict`.
     """
 
-    moviename = ""
-    read_id = ""
+    current_read_data = {}
     for line in input_stream:
         parts = line.split()
         if line.startswith('R'):
@@ -28,7 +36,11 @@ def parse_reads(input_stream: Iterable[str]) -> Iterable[Read]:
                     "enough parts (expected 2). Line: '{}'".format(line)
                 )
 
-            read_id = parts[1]
+            if current_read_data:
+                yield current_read_data
+                current_read_data = {}
+
+            current_read_data['read_id'] = parts[1]
         if line.startswith('H'):
             if len(parts) != 3:
                 raise ValueError(
@@ -36,7 +48,7 @@ def parse_reads(input_stream: Iterable[str]) -> Iterable[Read]:
                     "enough parts. Line: '{}'".format(line)
                 )
 
-            moviename = parts[2]
+            current_read_data['moviename'] = parts[2]
         elif line.startswith('L'):
             if len(parts) != 4:
                 raise ValueError(
@@ -44,33 +56,32 @@ def parse_reads(input_stream: Iterable[str]) -> Iterable[Read]:
                     "not enough parts (expected 4). Line: '{}'".format(line)
                 )
 
-            if not read_id or not moviename:
-                raise ValueError(
-                    "Unexpected output from DBdump, got a length (L) line "
-                    "before the read (R) and header (H) lines."
-                )
-
             pulse_start, pulse_end = map(int, parts[2:4])
             length = pulse_end - pulse_start
+            well = int(parts[1])
 
-            read = Read(read_id, moviename, int(parts[1]), pulse_start,
-                        pulse_end, length)
-            yield read
+            current_read_data['pulse_start'] = pulse_start
+            current_read_data['pulse_end'] = pulse_end
+            current_read_data['length'] = length
+            current_read_data['well'] = well
+        elif line.startswith('S'):
+            sequence = numpy.array(parts[1].strip().encode('ascii'), dtype='S')
+            current_read_data['sequence'] = sequence
+
+    if current_read_data:
+        yield current_read_data
 
 
-def parse_local_alignments(reads: Mapping[str, Read],
-                           input_stream: Iterable[str]) -> \
-                           Iterable[LocalAlignment]:
+def parse_local_alignments(input_stream: Iterable[str]) -> Iterable[dict]:
     """Parse DALIGNER LAdump local alignments.
 
     This function reads from an iterable `input_stream` the available local
     alignments encoded in DALIGNER LAdump format. In other words, you could
     pipe the output of LAdump to this function, and it yields each local
-    alignment with all avaible information as a nice Python `namedtuple`
-    (`LocalAlignment`).
+    alignment with all avaible information as a nice Python `dict`.
     """
 
-    a = b = strand = a_range = b_range = differences = trace_points = None
+    current_la_data = {}
     num_tracepoints = 0
     current_tracepoint = 0
 
@@ -79,28 +90,27 @@ def parse_local_alignments(reads: Mapping[str, Read],
 
         # Indicate overlap between two reads, and on which strand
         if line.startswith('P'):
-            if a and b:
-                alignment = LocalAlignment(
-                    a, b, strand, a_range, b_range, differences, trace_points
-                )
+            if (current_la_data and 'a' in current_la_data and 'b' in
+                    current_la_data):
+                yield current_la_data
 
-                yield alignment
+                current_la_data = {}
+                num_tracepoints = 0
+                current_tracepoint = 0
 
-                a = b = strand = a_range = b_range = differences = None
-                trace_points = None
-
-            a = reads[parts[1]]
-            b = reads[parts[2]]
-            strand = Strand.SAME if parts[3] == 'n' else Strand.OPPOSITE
+            current_la_data['a'] = parts[1]
+            current_la_data['b'] = parts[2]
+            current_la_data['strand'] = (Strand.SAME if parts[3] == 'n' else
+                                         Strand.OPPOSITE)
 
         # Indicate alignment range between two reads
         if line.startswith('C'):
             a_start, a_end, b_start, b_end = map(int, parts[1:])
-            a_range = (a_start, a_end)
-            b_range = (b_start, b_end)
+            current_la_data['arange'] = (a_start, a_end)
+            current_la_data['brange'] = (b_start, b_end)
 
         if line.startswith('T'):
-            trace_points = []
+            current_la_data['trace_points'] = []
             num_tracepoints = int(parts[1])
             current_tracepoint = 0
 
@@ -111,7 +121,11 @@ def parse_local_alignments(reads: Mapping[str, Read],
                     "tracepoints).".format(num_tracepoints)
                 )
 
-            trace_points.append(tuple(map(int, parts)))
+            current_la_data['trace_points'].append(tuple(map(int, parts)))
 
         if line.startswith('D'):
-            differences = int(parts[1])
+            current_la_data['differences'] = int(parts[1])
+
+    if current_la_data and 'a' in current_la_data and 'b' in current_la_data:
+        yield current_la_data
+        current_la_data = {}

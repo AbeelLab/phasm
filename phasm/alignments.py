@@ -1,6 +1,13 @@
 import enum
 from abc import ABCMeta, abstractmethod, abstractproperty
-from typing import List, Tuple, NamedTuple
+from typing import List, Tuple, Union
+
+import numpy
+
+Tracepoints = List[int]
+CIGAR = str
+Alignment = Union[Tracepoints, CIGAR]
+Range = Tuple[int, int]
 
 
 class Strand(enum.IntEnum):
@@ -55,20 +62,15 @@ class OrientedDNASegment(DNASegment):
         the DNA sequence itself), but an identifier denoting the reverse
         complement of this segment."""
 
-    def __hash__(self):
-        return hash(str(self))
 
-
-_Read = NamedTuple(
-    'Read',
-    [('id', str), ('moviename', str), ('well', str), ('pulse_start', int),
-     ('pulse_end', int), ('length', int)]
-)
-
-
-class Read(DNASegment, _Read):
+class Read(DNASegment):
     """Represents a read in the database. Can be used as node in an
     :class:`AssemblyGraph`."""
+
+    def __init__(self, id: str, length: int, sequence: numpy.array=None):
+        self.id = id
+        self.length = length
+        self.sequence = sequence
 
     def __len__(self) -> int:
         return self.length
@@ -80,13 +82,13 @@ class Read(DNASegment, _Read):
         return OrientedRead(self, orientation)
 
 
-_OrientedRead = NamedTuple('OrientedRead',
-                           [('read', Read), ('strand', str)])
-
-
-class OrientedRead(OrientedDNASegment, _OrientedRead):
+class OrientedRead(OrientedDNASegment):
     """Represents a read with orientation (from which strand). Can be used as
     node in an :class:`AssemblyGraph`."""
+
+    def __init__(self, read: Read, strand: str):
+        self.read = read
+        self.strand = strand
 
     @property
     def orientation(self) -> str:
@@ -97,11 +99,9 @@ class OrientedRead(OrientedDNASegment, _OrientedRead):
             self.read, "-" if self.orientation == "+" else "+")
 
     def __getattr__(self, key):
-        data = self.read._asdict()
-
-        if key in data:
-            return data[key]
-        else:
+        try:
+            return getattr(self.read, key)
+        except AttributeError:
             raise AttributeError("OrientedRead has no attribute '{}'".format(
                 key))
 
@@ -112,17 +112,17 @@ class OrientedRead(OrientedDNASegment, _OrientedRead):
         return str(self.read) + self.orientation
 
 
-_MergedReads = NamedTuple(
-    'MergedReads',
-    [('id', str), ('length', int), ('strand', str),
-     ('reads', List[OrientedRead])]
-)
-
-
-class MergedReads(OrientedDNASegment, _MergedReads):
+class MergedReads(OrientedDNASegment):
     """Represents a collection of reads to be merged together. For example,
     this is being used in an :class:`AssemblyGraph` to merge unambiguous
     (non-branching) paths to a single node."""
+
+    def __init__(self, id: str, length: int, strand: str,
+                 reads: List[OrientedRead]):
+        self.id = id
+        self.length = length
+        self.strand = strand
+        self.reads = reads
 
     @property
     def orientation(self) -> str:
@@ -140,15 +140,18 @@ class MergedReads(OrientedDNASegment, _MergedReads):
         return self.id + self.strand
 
 
-_LocalAlignment = NamedTuple(
-    '_LocalAlignment',
-    [('a', Read), ('b', Read), ('strand', Strand), ('arange', Tuple[int, int]),
-     ('brange', Tuple[int, int]), ('differences', int),
-     ('tracepoints', List[Tuple[int, int]])]
-)
+class LocalAlignment:
+    def __init__(self, a: Read, b: Read, strand: Strand, arange: Range,
+                 brange: Range, differences: int=0,
+                 alignment: Alignment=None):
+        self.a = a
+        self.b = b
+        self.strand = strand
+        self.arange = arange
+        self.brange = brange
+        self.differences = differences
+        self.alignment = alignment
 
-
-class LocalAlignment(_LocalAlignment):
     def get_overlap_length(self) -> int:
         return max(self.arange[1] - self.arange[0],
                    self.brange[1] - self.brange[0])
@@ -176,6 +179,14 @@ class LocalAlignment(_LocalAlignment):
     def get_oriented_reads(self) -> Tuple[OrientedRead, OrientedRead]:
         return self.a.with_orientation('+'), self.b.with_orientation(
             '+' if self.strand == Strand.SAME else '-')
+
+    @property
+    def a_id(self):
+        return self.a.id
+
+    @property
+    def b_id(self):
+        return self.b.id
 
     def __len__(self):
         return self.get_overlap_length()
