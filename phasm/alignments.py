@@ -42,6 +42,10 @@ class DNASegment(metaclass=ABCMeta):
     def __str__(self) -> str:
         """Identifier of this DNA segment"""
 
+    @abstractmethod
+    def __eq__(self, other: 'DNASegment') -> bool:
+        pass
+
     def __hash__(self) -> int:
         """Hash for this DNA segment to make sure these objects can be used as
         nodes in a networkx graph."""
@@ -49,7 +53,7 @@ class DNASegment(metaclass=ABCMeta):
         return hash(str(self))
 
 
-class OrientedDNASegment(DNASegment):
+class OrientedDNASegment(metaclass=ABCMeta):
     @abstractproperty
     def orientation(self):
         """Return the orientation of a read. Denoted as a '+' or a '-'."""
@@ -61,6 +65,24 @@ class OrientedDNASegment(DNASegment):
         Not the actual reverse complement (because these objects do not include
         the DNA sequence itself), but an identifier denoting the reverse
         complement of this segment."""
+
+    @abstractmethod
+    def __len__(self) -> int:
+        """Length of this DNA segment"""
+
+    @abstractmethod
+    def __str__(self) -> str:
+        """Identifier of this DNA segment"""
+
+    @abstractmethod
+    def __eq__(self, other: 'OrientedDNASegment') -> bool:
+        pass
+
+    def __hash__(self) -> int:
+        """Hash for this DNA segment to make sure these objects can be used as
+        nodes in a networkx graph."""
+
+        return hash(str(self))
 
 
 class Read(DNASegment):
@@ -77,6 +99,21 @@ class Read(DNASegment):
 
     def __str__(self) -> str:
         return self.id
+
+    def __repr__(self) -> str:
+        return "Read[id={0.id}, len={0.length}]".format(self)
+
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, self.__class__):
+            return False
+
+        return self.id == other.id and self.length == other.length
+
+    def __hash__(self) -> int:
+        """Hash for this DNA segment to make sure these objects can be used as
+        nodes in a networkx graph."""
+
+        return hash(str(self))
 
     def with_orientation(self, orientation) -> 'OrientedRead':
         return OrientedRead(self, orientation)
@@ -111,6 +148,22 @@ class OrientedRead(OrientedDNASegment):
     def __str__(self):
         return str(self.read) + self.orientation
 
+    def __repr__(self):
+        return "OrientedRead[id={0.id}{0.strand}, len={0.read.length}]".format(
+            self)
+
+    def __eq__(self, other):
+        if not isinstance(other, self.__class__):
+            return False
+
+        return self.read == other.read and self.strand == other.strand
+
+    def __hash__(self) -> int:
+        """Hash for this DNA segment to make sure these objects can be used as
+        nodes in a networkx graph."""
+
+        return hash(str(self))
+
 
 class MergedReads(OrientedDNASegment):
     """Represents a collection of reads to be merged together. For example,
@@ -133,6 +186,16 @@ class MergedReads(OrientedDNASegment):
         return MergedReads(self.id, self.length, new_strand,
                            [r.reverse() for r in reversed(self.reads)])
 
+    def __hash__(self):
+        return hash(str(self))
+
+    def __eq__(self, other):
+        if not isinstance(other, self.__class__):
+            return False
+
+        return (self.id == other.id and self.strand == other.strand and
+                self.length == other.length)
+
     def __len__(self):
         return self.length
 
@@ -142,22 +205,17 @@ class MergedReads(OrientedDNASegment):
 
 class LocalAlignment:
     def __init__(self, a: Read, b: Read, strand: Strand, arange: Range,
-                 brange: Range, differences: int=0,
-                 alignment: Alignment=None):
+                 brange: Range, alignment: Alignment=None):
         self.a = a
         self.b = b
         self.strand = strand
         self.arange = arange
         self.brange = brange
-        self.differences = differences
         self.alignment = alignment
 
     def get_overlap_length(self) -> int:
         return max(self.arange[1] - self.arange[0],
                    self.brange[1] - self.brange[0])
-
-    def get_error_rate(self) -> float:
-        return self.differences / self.get_overlap_length()
 
     def get_overhang(self) -> int:
         return (min(self.arange[0], self.brange[0]) +
@@ -190,3 +248,7 @@ class LocalAlignment:
 
     def __len__(self):
         return self.get_overlap_length()
+
+    def __repr__(self):
+        return ("LocalAlignment[a={0.a_id}, b={0.b_id}, arange={0.arange}, "
+                "brange={0.brange}, strand={0.strand}]".format(self))
