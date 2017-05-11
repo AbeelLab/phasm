@@ -58,42 +58,6 @@ class MinOverlapLength(AlignmentFilter):
         return la.get_overlap_length() >= self.min_length
 
 
-class MaxDifferences(AlignmentFilter):
-    """This filter removes all alignments with more differences than
-    `max_diff`.
-
-    To be used with Python's builtin `filter` function, and some iterable which
-    outputs `LocalAlignment`s.
-
-    .. seealso:: LocalAlignment, MinOverlapLength, MaxErrorRate
-    """
-
-    def __init__(self, max_diff: int):
-        super().__init__()
-        self.max_diff = max_diff
-
-    def filter(self, la: LocalAlignment) -> bool:
-        return la.differences <= self.max_diff
-
-
-class MaxErrorRate(AlignmentFilter):
-    """This filter removes all alignments with a higher error rate than
-    `max_error_rate`.
-
-    To be used with Python's builtin `filter` function, and some iterable which
-    outputs `LocalAlignment`s.
-
-    .. seealso:: LocalAlignment, MinOverlapLength, MaxDifferences
-    """
-
-    def __init__(self, max_error_rate: float):
-        super().__init__()
-        self.max_error_rate = max_error_rate
-
-    def filter(self, la: LocalAlignment) -> bool:
-        return la.get_error_rate() <= self.max_error_rate
-
-
 class ContainedReads(AlignmentFilter):
     """This filter removes all alignments for which holds that one read is
     contained by the other.
