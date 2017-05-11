@@ -1,3 +1,7 @@
+import random
+import string
+
+
 def round_up(number: int, multiple: int) -> int:
     """Round a number up to a multiple of another number. Only works for
     positive numbers.
@@ -16,3 +20,9 @@ def round_up(number: int, multiple: int) -> int:
     assert multiple != 0
 
     return int((number + multiple - 1) / multiple) * multiple
+
+
+def random_string(n, alphabet=string.ascii_letters):
+    return ''.join(
+        random.choice(alphabet) for _ in range(n)
+    )

@@ -3,6 +3,7 @@ This module contains some helper functions to parse data from DAZZ_DB and
 DALIGNER.
 """
 
+import hashlib
 from typing import Iterable
 
 import numpy
@@ -10,7 +11,35 @@ import numpy
 from phasm.alignments import Strand
 
 
-def full_id(read_data: dict):
+def generate_moviename_hash(filename: str) -> str:
+    """Generate a large integer to be used in the fake PacBio movie name
+    based on the SHA256 hash of the filename.
+    """
+
+    name_hash = int.from_bytes(
+        hashlib.sha256(filename.encode('utf-8')).digest()[:8],
+        byteorder='little'
+    )
+
+    return str(name_hash)
+
+
+def fix_header(seq_iter, moviename, name_mapping=None):
+    """A generator that "fixes" FASTA headers to a PacBio compatible
+    format, to ensure these sequences can be imported in DAZZ_DB.
+    """
+
+    seq_id_tpl = "m000000_000000_00000_c{name}/{id}/0_{len}"
+    for i, read in enumerate(seq_iter):
+        new_name = seq_id_tpl.format(
+            name=moviename, id=i, len=len(read.sequence))
+        if name_mapping is not None:
+            name_mapping[read.name.decode('utf-8')] = new_name
+
+        yield read.sequence, new_name.encode('ascii')
+
+
+def full_id(read_data: dict) -> str:
     return "{moviename}/{read_id}/{pulse_start}_{pulse_end}".format(
         **read_data)
 
@@ -88,7 +117,7 @@ def parse_local_alignments(input_stream: Iterable[str]) -> Iterable[dict]:
     for line in input_stream:
         parts = line.split()
 
-        # Indicate overlap between two reads, and on which strand
+        # Indicates overlap between two reads, and on which strand
         if line.startswith('P'):
             if (current_la_data and 'a' in current_la_data and 'b' in
                     current_la_data):
@@ -103,7 +132,7 @@ def parse_local_alignments(input_stream: Iterable[str]) -> Iterable[dict]:
             current_la_data['strand'] = (Strand.SAME if parts[3] == 'n' else
                                          Strand.OPPOSITE)
 
-        # Indicate alignment range between two reads
+        # Indicates alignment range between two reads
         if line.startswith('C'):
             a_start, a_end, b_start, b_end = map(int, parts[1:])
             current_la_data['arange'] = (a_start, a_end)

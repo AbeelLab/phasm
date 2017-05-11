@@ -2,17 +2,64 @@
 Phasm CLI entry points
 """
 
+import os
 import sys
 import json
 import logging
 import argparse
 
+import dinopy
+
 from phasm.io import daligner, gfa
+from phasm.utils import random_string
 from phasm.alignments import Strand
 
 logging.basicConfig()
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
+
+def fasta2dazzdb(args: argparse.Namespace):
+    """Fix the FASTA/FASTQ header/id's to a DAZZ_DB compatible format such that
+    these reads can be imported."""
+
+    file_format = args.format
+    if not file_format:
+        if args.input != sys.stdin:
+            filename = args.input.name
+            file_ext = filename[filename.rfind('.'):]
+
+            file_format = 'fastq' if file_ext in ('fq', 'fastq') else 'fasta'
+
+    if not file_format:
+        logger.error("Could not determine file format. Please specify using "
+                     "the -f option.")
+        return
+
+    if file_format == 'fastq':
+        seq_iter = iter(dinopy.FastqReader(args.input).reads(
+            quality_values=False))
+    else:
+        seq_iter = iter(dinopy.FastaReader(args.input).reads(read_names=True))
+
+    if args.input == sys.stdin:
+        name = args.name if args.name else random_string(10)
+    else:
+        name = os.path.basename(args.input.name)
+
+    moviename = daligner.generate_moviename_hash(name)
+    name_mapping = {}
+    seq_iter = iter(daligner.fix_header(seq_iter, moviename, name_mapping))
+
+    logger.info("Converting FASTA/FASTQ entries...")
+    with dinopy.FastaWriter(args.output, force_overwrite=True) as fw:
+        fw.write_entries(seq_iter)
+
+    if args.translations:
+        logger.info("Writing name mappings to file...")
+        json.dump(name_mapping, args.translations)
+
+    logger.info("Done.")
 
 
 def daligner2gfa(args: argparse.Namespace):
@@ -68,10 +115,10 @@ def daligner2gfa(args: argparse.Namespace):
 
         parts.extend(arange + brange)
 
-        if args.with_trace_points:
-            if 'trace_points' in la:
-                parts.append(",".join(
-                    str(t[1]) for t in la['trace_points']))
+        if args.with_trace_points and 'trace_points' in la:
+            parts.append(",".join(str(t[1]) for t in la['trace_points']))
+        else:
+            parts.append("*")
 
         args.out.write(gfa.gfa_line(*parts))
 
@@ -108,7 +155,7 @@ def main():
         '-T', '--translations', type=argparse.FileType('r'), required=False,
         default=None, metavar='TRANSLATION_FILE',
         help="Give a map which translates DALIGNER sequence ID's to something "
-             "else. Should be a JSON value with a single object containing "
+             "else. Should be a JSON file with a single object containing "
              "key: value pairs."
     )
     da2gfa_parser.add_argument(
@@ -127,6 +174,47 @@ def main():
         'las_input', type=argparse.FileType('r'), default=sys.stdin, nargs='?',
         help="File to read local alignments from (should be in LAdump format)."
              " Defaults to stdin. See documentation for recommended usage."
+    )
+
+    fasta2dazzdb_parser = subparsers.add_parser(
+        'fasta2dazzdb',
+        help="Fix the header (names) of FASTA/FASTQ entries in the given file "
+             "to a PacBio compatible format so they can be imported in DAZZ_DB"
+             "."
+    )
+    fasta2dazzdb_parser.set_defaults(func=fasta2dazzdb)
+
+    fasta2dazzdb_parser.add_argument(
+        'input', type=argparse.FileType('rb'), default=sys.stdin, nargs='?',
+        help="Filename of the FASTA/FASTQ file to read, default stdin"
+    )
+
+    fasta2dazzdb_parser.add_argument(
+        '-o', '--output', type=argparse.FileType('wb'), default=sys.stdout,
+        help="File to write the converted FASTA file to, default stdout"
+    )
+    fasta2dazzdb_parser.add_argument(
+        '-f', '--format', default=None,
+        help="Specify the input file format. Can be either fasta or fastq. "
+             "Using this setting overrides our own format detection based "
+             "on file extension."
+    )
+
+    fasta2dazzdb_parser.add_argument(
+        '-n', '--name', required=False, default="",
+        help="When fixing FASTA headers this script generates a 'moviename' "
+             "based on the hash of the filename. When reading from stdin this "
+             "filename is not available, and with this option you can specify "
+             "what name to use for moviename generation (does not have to be "
+             "an actual file). By default it just generates a random string."
+    )
+
+    fasta2dazzdb_parser.add_argument(
+        '-T', '--translations', type=argparse.FileType('w'), default=None,
+        required=False, metavar="TRANSLATIONS_FILE",
+        help="Generate a JSON file which contains an old_name: new_name "
+             "mapping so you can easility retreive the original name again "
+             "for each read."
     )
 
     args = parser.parse_args()
