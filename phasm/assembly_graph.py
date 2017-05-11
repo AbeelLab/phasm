@@ -29,7 +29,9 @@ class AssemblyGraph(networkx.DiGraph):
             self.adj[v] = OrderedDict(sorted_iter)
 
 
-def build_assembly_graph(la_iter: Iterable[LocalAlignment]) -> AssemblyGraph:
+def build_assembly_graph(la_iter: Iterable[LocalAlignment],
+                         edge_len: str='weight',
+                         overlap_len: str='overlap_len') -> AssemblyGraph:
     g = AssemblyGraph()
 
     logger.info('Start building assembly graph...')
@@ -41,14 +43,14 @@ def build_assembly_graph(la_iter: Iterable[LocalAlignment]) -> AssemblyGraph:
 
         if la_type == AlignmentType.OVERLAP_AB:
             g.add_edge(a_node, b_node, {
-                'weight': la.arange[0] - la.brange[0],
-                'overlap_len': la.get_overlap_length()
+                edge_len: la.arange[0] - la.brange[0],
+                overlap_len: la.get_overlap_length()
             })
 
             g.add_edge(b_rev, a_rev, {
-                'weight': ((len(la.b) - la.brange[1]) -
+                edge_len: ((len(la.b) - la.brange[1]) -
                            (len(la.a) - la.arange[1])),
-                'overlap_len': la.get_overlap_length()
+                overlap_len: la.get_overlap_length()
             })
 
             logger.debug('Added edge (%s, %s) with weight %d',
@@ -57,14 +59,14 @@ def build_assembly_graph(la_iter: Iterable[LocalAlignment]) -> AssemblyGraph:
                          b_rev, a_rev, g[b_rev][a_rev]['weight'])
         elif la_type == AlignmentType.OVERLAP_BA:
             g.add_edge(b_node, a_node, {
-                'weight': la.brange[0] - la.arange[0],
-                'overlap_len': la.get_overlap_length()
+                edge_len: la.brange[0] - la.arange[0],
+                overlap_len: la.get_overlap_length()
             })
 
             g.add_edge(a_rev, b_rev, {
-                'weight': ((len(la.a) - la.arange[1]) -
+                edge_len: ((len(la.a) - la.arange[1]) -
                            (len(la.b) - la.brange[1])),
-                'overlap_len': la.get_overlap_length()
+                overlap_len: la.get_overlap_length()
             })
 
             logger.debug('Added edge (%s, %s) with weight %d',
@@ -295,7 +297,7 @@ def remove_incoming_tips(g: AssemblyGraph, max_tip_len: int=5):
     return num_tip_edges
 
 
-def remove_tips(g: AssemblyGraph, max_tip_len: int=5):
+def remove_tips(g: AssemblyGraph, max_tip_len: int=3):
     """Remove both small incoming and outgoing tips.
 
     .. seealso:: remove_incoming_tips, remove_outgoing_tips
@@ -368,7 +370,8 @@ def clean_graph(g: AssemblyGraph):
     return len(isolated_nodes)
 
 
-def merge_unambiguous_paths(g: AssemblyGraph, edge_len: str='weight'):
+def merge_unambiguous_paths(g: AssemblyGraph, edge_len: str='weight',
+                            overlap_len: str='overlap_len'):
     """Merge unambiguous (non-branching) paths to a single node.
 
     This method does not take the reverse complements into account, because
@@ -376,8 +379,13 @@ def merge_unambiguous_paths(g: AssemblyGraph, edge_len: str='weight'):
     reverse strand (because of other reads aligning there). It is therefore not
     recommended to run `make_symmetric` after applying this operation."""
 
-    start_points = [n for n in g.nodes_iter() if (g.in_degree(n) == 0 or
-                    g.in_degree(n) > 1) and g.out_degree(n) == 1]
+    start_points = [
+        n for n in g.nodes_iter() if
+        (
+            (g.in_degree(n) == 1 and g.out_degree(g.predecessors(n)[0]) > 1) or
+            (g.in_degree(n) == 0 or g.in_degree(n) > 1)
+        ) and g.out_degree(n) == 1
+    ]
 
     num_merged_nodes = 0
 
@@ -407,9 +415,14 @@ def merge_unambiguous_paths(g: AssemblyGraph, edge_len: str='weight'):
 
         # Create the new node and copy the required edges
         new_id = "[" + "|".join(str(r) for r in nodes_to_merge) + "]"
-        new_length = sum(len(n) for n in nodes_to_merge)
         new_unmatched_prefix = sum(g[u][v][edge_len] for u, v in
                                    node_path_edges(nodes_to_merge))
+        new_length = new_unmatched_prefix + (
+            # Add length of the last read, but don't count overlapping part
+            # twice
+            len(nodes_to_merge[-1]) -
+            g[nodes_to_merge[-2]][nodes_to_merge[-1]][overlap_len]
+        )
 
         # Keep strand from first node
         new_node = MergedReads(new_id, new_length,
@@ -437,8 +450,8 @@ def merge_unambiguous_paths(g: AssemblyGraph, edge_len: str='weight'):
         logger.debug("Removing nodes: %s", [str(n) for n in nodes_to_merge])
         g.remove_nodes_from(nodes_to_merge)
 
-        for e in g.edges_iter(new_node, data=True):
-            logger.debug("Edge: (%s, %s), %s", e[0].id, e[1].id, e[2])
+        logger.debug("New node in-degree: %d, out-degree: %d.",
+                     g.in_degree(new_node), g.out_degree(new_node))
 
         num_merged_nodes += len(nodes_to_merge)
 
