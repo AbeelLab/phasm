@@ -32,9 +32,9 @@ def fix_header(seq_iter, moviename, name_mapping=None):
     seq_id_tpl = "m000000_000000_00000_c{name}/{id}/0_{len}"
     for i, read in enumerate(seq_iter):
         new_name = seq_id_tpl.format(
-            name=moviename, id=i, len=len(read.sequence))
+            name=moviename, id=i+1, len=len(read.sequence))
         if name_mapping is not None:
-            name_mapping[read.name.decode('utf-8')] = new_name
+            name_mapping[new_name] = read.name.decode('utf-8')
 
         yield read.sequence, new_name.encode('ascii')
 
@@ -94,7 +94,7 @@ def parse_reads(input_stream: Iterable[str]) -> Iterable[dict]:
             current_read_data['length'] = length
             current_read_data['well'] = well
         elif line.startswith('S'):
-            sequence = numpy.array(parts[1].strip().encode('ascii'), dtype='S')
+            sequence = numpy.array(parts[2].strip().encode('ascii'), dtype='S')
             current_read_data['sequence'] = sequence
 
     if current_read_data:

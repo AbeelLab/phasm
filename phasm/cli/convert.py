@@ -79,6 +79,9 @@ def daligner2gfa(args: argparse.Namespace):
             full_id = daligner.full_id(read)
             read_id = read_id_trans[full_id]
 
+        # If the ID contains white space, only keep the first part
+        read_id = read_id.split()[0]
+
         # Keep actual read ID to properly define edges below
         internal_id_map[read['read_id']] = read_id
 
@@ -212,7 +215,7 @@ def main():
     fasta2dazzdb_parser.add_argument(
         '-T', '--translations', type=argparse.FileType('w'), default=None,
         required=False, metavar="TRANSLATIONS_FILE",
-        help="Generate a JSON file which contains an old_name: new_name "
+        help="Generate a JSON file which contains an new_name: old_name "
              "mapping so you can easility retreive the original name again "
              "for each read."
     )
