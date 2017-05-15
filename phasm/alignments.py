@@ -171,11 +171,16 @@ class MergedReads(OrientedDNASegment):
     (non-branching) paths to a single node."""
 
     def __init__(self, id: str, length: int, strand: str,
-                 reads: List[OrientedRead]):
+                 reads: List[OrientedRead], prefix_lengths: List[int]):
         self.id = id
         self.length = length
         self.strand = strand
         self.reads = reads
+
+        # Contains a list of integers determining the "unmatched prefix"
+        # lengths of each merged read, so we can easily construct the actual
+        # DNA sequence of this merged path
+        self.prefix_lengths = prefix_lengths
 
     @property
     def orientation(self) -> str:

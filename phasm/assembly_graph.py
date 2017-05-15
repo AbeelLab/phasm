@@ -6,6 +6,7 @@ from collections import defaultdict, OrderedDict
 import networkx
 
 from phasm.alignments import LocalAlignment, AlignmentType, MergedReads
+from phasm.io.sequences import SequenceSource
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,12 @@ class NodeState(enum.IntEnum):
 class AssemblyGraph(networkx.DiGraph):
     adjlist_dict_factory = OrderedDict
 
+    def __init__(self, sequence_src: SequenceSource=None, data: dict=None,
+                 **kwargs):
+        super().__init__(data, **kwargs)
+
+        self.sequence_src = sequence_src
+
     def sort_adjacency_lists(self, reverse=False, weight='weight'):
         for v in self:
             sorted_iter = sorted(self.adj[v].items(),
@@ -27,6 +34,62 @@ class AssemblyGraph(networkx.DiGraph):
                 sorted_iter = reversed(sorted_iter)
 
             self.adj[v] = OrderedDict(sorted_iter)
+
+    def sequence_for_path(self, path, edge_len='weight', include_last=True):
+        """Get the actual DNA sequence for a path through the assembly graph.
+        Requires `self.sequence_src` to be set."""
+
+        if not self.sequence_src:
+            raise ValueError("No valid sequence source provided. Cannot spell "
+                             "DNA sequence of a path.")
+
+        last = None
+        sequence_parts = []
+        for u, v, data in path:
+            sequence = self.sequence_src.get_sequence(u)
+            sequence_parts.append(sequence[:data[edge_len]])
+
+            last = v
+
+        if include_last and last:
+            sequence_parts.append(self.sequence_src.get_sequence(last))
+
+        return b"".join(sequence_parts)
+
+    def node_path_edges(self, nodes, data=None):
+        """A generator that yields the edges for a path between the given
+        nodes. If an edge does not exists in the graph an exception is raised.
+
+        Example::
+
+        >>> g = AssemblyGraph()
+        >>> g.add_edges_from([(1, 2), (2, 3), (3, 4)])
+        >>> g.node_path_edges([1, 2, 3])
+        >>> list(g.node_path_edges(path))
+        [(1, 2), (2, 3)]
+
+        """
+        if len(nodes) < 2:
+            raise ValueError("Not enough nodes to generate a path from")
+
+        node_iter = iter(nodes)
+
+        # Automatically raises StopIteration at the end of the iterator
+        node_from = next(node_iter)
+        while True:
+            node_to = next(node_iter)
+            if not self.has_edge(node_from, node_to):
+                raise ValueError("Given nodes do not form a path, edge {} "
+                                 "not exist".format((node_from, node_to)))
+            if data:
+                if data is True:
+                    yield (node_from, node_to, self[node_from][node_to])
+                else:
+                    yield (node_from, node_to, self[node_from][node_to][data])
+            else:
+                yield (node_from, node_to)
+
+            node_from = node_to
 
 
 def build_assembly_graph(la_iter: Iterable[LocalAlignment],
@@ -167,31 +230,6 @@ def remove_transitive_edges(g: AssemblyGraph, edge_len: str='weight',
     return edges_to_remove
 
 
-def node_path_edges(nodes):
-    """
-    A generator that yields the edges for a path between the given nodes.
-
-    Example::
-
-    >>> path = ['n1', 'n2', 'n3']
-    >>> list(node_path_edges(path))
-    [('n1', 'n2'), ('n2', 'n3')]
-
-    """
-    if len(nodes) < 2:
-        raise ValueError("Not enough nodes to generate a path from")
-
-    node_iter = iter(nodes)
-
-    # Automatically raises StopIteration at the end of the iterator
-    node_from = next(node_iter)
-    while True:
-        node_to = next(node_iter)
-        yield (node_from, node_to)
-
-        node_from = node_to
-
-
 def remove_outgoing_tips(g: AssemblyGraph, max_tip_len: int=5):
     """Remove short outgoing tips from the assembly graph.
 
@@ -240,7 +278,7 @@ def remove_outgoing_tips(g: AssemblyGraph, max_tip_len: int=5):
             logger.debug("Removing tip: %s", path)
             num_tip_edges += len(path)-1
 
-            g.remove_edges_from(node_path_edges(path))
+            g.remove_edges_from(g.node_path_edges(path))
 
     return num_tip_edges
 
@@ -292,7 +330,7 @@ def remove_incoming_tips(g: AssemblyGraph, max_tip_len: int=5):
             logger.debug("Removing tip: %s", path)
             num_tip_edges += len(path)-1
 
-            g.remove_edges_from(node_path_edges(path))
+            g.remove_edges_from(g.node_path_edges(path))
 
     return num_tip_edges
 
@@ -415,8 +453,9 @@ def merge_unambiguous_paths(g: AssemblyGraph, edge_len: str='weight',
 
         # Create the new node and copy the required edges
         new_id = "[" + "|".join(str(r) for r in nodes_to_merge) + "]"
-        new_unmatched_prefix = sum(g[u][v][edge_len] for u, v in
-                                   node_path_edges(nodes_to_merge))
+        prefix_lengths = [l for u, v, l in
+                          g.node_path_edges(nodes_to_merge, edge_len)]
+        new_unmatched_prefix = sum(prefix_lengths)
         new_length = new_unmatched_prefix + (
             # Add length of the last read, but don't count overlapping part
             # twice
@@ -426,7 +465,8 @@ def merge_unambiguous_paths(g: AssemblyGraph, edge_len: str='weight',
 
         # Keep strand from first node
         new_node = MergedReads(new_id, new_length,
-                               nodes_to_merge[0].orientation, nodes_to_merge)
+                               nodes_to_merge[0].orientation, nodes_to_merge,
+                               prefix_lengths)
         g.add_node(new_node)
 
         # Incoming edges
