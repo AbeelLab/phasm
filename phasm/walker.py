@@ -30,13 +30,16 @@ def build_haplographs(g: AssemblyGraph,
     logger.info("Graph has %d superbubbles", len(bubbles))
 
     # Obtain start nodes, nodes which have no incoming edges or at a junction
-    # which is not part of a superbubble
+    # which is not part of a superbubble.
+    # Priority to point without incoming edges
     start_points = [
-        n for n in g.nodes_iter() if g.in_degree(n) == 0 or (
+        n for n in g.nodes_iter() if g.in_degree(n) == 0]
+
+    start_points.extend(n for n in g.nodes_iter() if (
             g.in_degree(n) > 1 and n not in bubble_sources and
             n not in bubble_sinks
         )
-    ]
+    )
 
     logger.info("Number of start points : %d", len(start_points))
 
@@ -47,9 +50,11 @@ def build_haplographs(g: AssemblyGraph,
 
         subgraph_nodes = set()
 
+        logger.debug("New start point %s", start)
         curr_node = start
         while curr_node:
             if curr_node in bubble_sources:
+                logger.debug("Bubble source %s", curr_node)
                 # Start of a superbubble, include all nodes of the superbubble
                 bubble_nodes = superbubble_nodes(g, curr_node,
                                                  bubbles[curr_node])
