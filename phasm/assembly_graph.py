@@ -5,8 +5,8 @@ from collections import defaultdict, OrderedDict
 
 import networkx
 
-from phasm.alignments import LocalAlignment, AlignmentType, MergedReads
-from phasm.io.sequences import SequenceSource
+from phasm.alignments import (LocalAlignment, AlignmentType, MergedReads,
+                              OrientedDNASegment)
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +20,24 @@ class NodeState(enum.IntEnum):
 class AssemblyGraph(networkx.DiGraph):
     adjlist_dict_factory = OrderedDict
 
-    def __init__(self, sequence_src: SequenceSource=None, data: dict=None,
-                 **kwargs):
+    def __init__(self, data: dict=None, **kwargs):
         super().__init__(data, **kwargs)
 
-        self.sequence_src = sequence_src
+        self.sequence_src = None
+
+    def subgraph(self, nbunch):
+        g = super().subgraph(nbunch)
+        g.sequence_src = self.sequence_src
+
+        return g
+
+    @property
+    def edge_len(self):
+        return self.graph.get('edge_len', 'weight')
+
+    @property
+    def overlap_len(self):
+        return self.graph.get('overlap_len', 'overlap_len')
 
     def sort_adjacency_lists(self, reverse=False, weight='weight'):
         for v in self:
@@ -34,6 +47,16 @@ class AssemblyGraph(networkx.DiGraph):
                 sorted_iter = reversed(sorted_iter)
 
             self.adj[v] = OrderedDict(sorted_iter)
+
+    def get_sequence(self, read: OrientedDNASegment):
+        """Get the sequence for an oriented read. Mostly a convenience function
+        which passes the request to `SequenceSource`."""
+
+        if not self.sequence_src:
+            raise ValueError("No valid sequence source provided. Cannot get "
+                             "DNA sequence of a read.")
+
+        return self.sequence_src.get_sequence(read)
 
     def sequence_for_path(self, path, edge_len='weight', include_last=True):
         """Get the actual DNA sequence for a path through the assembly graph.
@@ -95,7 +118,7 @@ class AssemblyGraph(networkx.DiGraph):
 def build_assembly_graph(la_iter: Iterable[LocalAlignment],
                          edge_len: str='weight',
                          overlap_len: str='overlap_len') -> AssemblyGraph:
-    g = AssemblyGraph()
+    g = AssemblyGraph(edge_len=edge_len, overlap_len=overlap_len)
 
     logger.info('Start building assembly graph...')
 
@@ -117,9 +140,9 @@ def build_assembly_graph(la_iter: Iterable[LocalAlignment],
             })
 
             logger.debug('Added edge (%s, %s) with weight %d',
-                         a_node, b_node, g[a_node][b_node]['weight'])
+                         a_node, b_node, g[a_node][b_node][edge_len])
             logger.debug('Added edge (%s, %s) with weight %d',
-                         b_rev, a_rev, g[b_rev][a_rev]['weight'])
+                         b_rev, a_rev, g[b_rev][a_rev][edge_len])
         elif la_type == AlignmentType.OVERLAP_BA:
             g.add_edge(b_node, a_node, {
                 edge_len: la.brange[0] - la.arange[0],
@@ -133,9 +156,9 @@ def build_assembly_graph(la_iter: Iterable[LocalAlignment],
             })
 
             logger.debug('Added edge (%s, %s) with weight %d',
-                         b_node, a_node, g[b_node][a_node]['weight'])
+                         b_node, a_node, g[b_node][a_node][edge_len])
             logger.debug('Added edge (%s, %s) with weight %d',
-                         a_rev, b_rev, g[a_rev][b_rev]['weight'])
+                         a_rev, b_rev, g[a_rev][b_rev][edge_len])
 
     logger.info("Built assembly graph with %d nodes and %d edges.",
                 networkx.number_of_nodes(g),
@@ -144,8 +167,7 @@ def build_assembly_graph(la_iter: Iterable[LocalAlignment],
     return g
 
 
-def remove_transitive_edges(g: AssemblyGraph, edge_len: str='weight',
-                            length_fuzz: int=1000):
+def remove_transitive_edges(g: AssemblyGraph, length_fuzz: int=1000):
     """This function implements the transitive edge reduction algorithm
     described by Myers (2005) [MYERS2005]_.
 
@@ -174,7 +196,7 @@ def remove_transitive_edges(g: AssemblyGraph, edge_len: str='weight',
 
     # Ensure that when we iterate over a node's neighbours, we obtain the
     # "shortest" edge first.
-    g.sort_adjacency_lists(weight=edge_len)
+    g.sort_adjacency_lists(weight=g.edge_len)
     logger.debug("Sorted adjacency lists")
 
     num_nodes = networkx.number_of_nodes(g)
@@ -188,7 +210,7 @@ def remove_transitive_edges(g: AssemblyGraph, edge_len: str='weight',
 
         # Get the last item in the sorted adjacency list, which is the longest
         # edge
-        longest_edge = next(reversed(v_neighbours.values()))[edge_len]
+        longest_edge = next(reversed(v_neighbours.values()))[g.edge_len]
         longest_edge += length_fuzz
 
         for w in v_neighbours:
@@ -199,8 +221,8 @@ def remove_transitive_edges(g: AssemblyGraph, edge_len: str='weight',
                 w_neighbours = g[w]
                 for x in w_neighbours:
                     if node_state[x] == NodeState.IN_PLAY:
-                        total_edge_len = (g[v][w][edge_len] +
-                                          g[w][x][edge_len])
+                        total_edge_len = (g[v][w][g.edge_len] +
+                                          g[w][x][g.edge_len])
                         if total_edge_len <= longest_edge:
                             node_state[x] = NodeState.ELIMINATED
                             logger.debug("Node %s marked eliminated", x)
@@ -215,7 +237,7 @@ def remove_transitive_edges(g: AssemblyGraph, edge_len: str='weight',
                         node_state[x] = NodeState.ELIMINATED
                         logger.debug("Node %s marked eliminated (smallest)", x)
 
-                    if g[w][x][edge_len] < length_fuzz:
+                    if g[w][x][g.edge_len] < length_fuzz:
                         node_state[x] = NodeState.ELIMINATED
                         logger.debug("Node %s marked eliminated", x)
 
@@ -348,20 +370,18 @@ def remove_tips(g: AssemblyGraph, max_tip_len: int=3):
 
 
 def remove_short_overlaps(g: AssemblyGraph, drop_ratio: float,
-                          edge_len: str='weight',
-                          overlap_len: str='overlap_len',
                           sort: bool=False):
     if sort:
-        g.sort_adjacency_lists(weight=edge_len)
+        g.sort_adjacency_lists(weight=g.edge_len)
 
     junction_nodes = (n for n in g.nodes_iter() if g.out_degree(n) > 1)
 
     for v in junction_nodes:
         v_neighbours = g[v]
 
-        max_ovl = max(w[overlap_len] for w in v_neighbours.values())
+        max_ovl = max(w[g.overlap_len] for w in v_neighbours.values())
         _, shortest_edge_target, shortest_edge_ovl = next(
-            g.edges_iter(v, data=overlap_len))
+            g.edges_iter(v, data=g.overlap_len))
 
         if max_ovl != shortest_edge_ovl:
             continue
@@ -374,7 +394,7 @@ def remove_short_overlaps(g: AssemblyGraph, drop_ratio: float,
                 # Don't remove the shortest edge
                 break
 
-            if data[overlap_len] < threshold:
+            if data[g.overlap_len] < threshold:
                 # Remove this edge
                 yield (v, w)
             else:
@@ -408,8 +428,7 @@ def clean_graph(g: AssemblyGraph):
     return len(isolated_nodes)
 
 
-def merge_unambiguous_paths(g: AssemblyGraph, edge_len: str='weight',
-                            overlap_len: str='overlap_len'):
+def merge_unambiguous_paths(g: AssemblyGraph):
     """Merge unambiguous (non-branching) paths to a single node.
 
     This method does not take the reverse complements into account, because
@@ -454,14 +473,9 @@ def merge_unambiguous_paths(g: AssemblyGraph, edge_len: str='weight',
         # Create the new node and copy the required edges
         new_id = "[" + "|".join(str(r) for r in nodes_to_merge) + "]"
         prefix_lengths = [l for u, v, l in
-                          g.node_path_edges(nodes_to_merge, edge_len)]
+                          g.node_path_edges(nodes_to_merge, g.edge_len)]
         new_unmatched_prefix = sum(prefix_lengths)
-        new_length = new_unmatched_prefix + (
-            # Add length of the last read, but don't count overlapping part
-            # twice
-            len(nodes_to_merge[-1]) -
-            g[nodes_to_merge[-2]][nodes_to_merge[-1]][overlap_len]
-        )
+        new_length = new_unmatched_prefix + len(nodes_to_merge[-1])
 
         # Keep strand from first node
         new_node = MergedReads(new_id, new_length,
@@ -483,7 +497,7 @@ def merge_unambiguous_paths(g: AssemblyGraph, edge_len: str='weight',
             # merging nodes, so we need to adjust the `edge_len` attribute of
             # all outgoing edges.
             new_data = dict(**data)
-            new_data[edge_len] += new_unmatched_prefix
+            new_data[g.edge_len] += new_unmatched_prefix
             g.add_edge(new_node, v, new_data)
 
         # Remove merged nodes
