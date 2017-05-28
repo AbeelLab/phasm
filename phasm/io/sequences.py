@@ -25,8 +25,7 @@ class SequenceSource(metaclass=ABCMeta):
     @abstractmethod
     def _get_sequence(self, read: OrientedRead) -> bytes:
         """Get the sequence of the given read, and return as a bytes object.
-        This function shouldn't worry about taking the reverse complement,
-        that's handled by `get_sequence`.
+        This function should take the reverse complement if necessary.
 
         .. seealso:: get_sequence"""
 
@@ -80,7 +79,8 @@ class FastaSource(SequenceSource):
         """Read the sequence from the FASTA file. Returns the reverse
         complement if necessary."""
 
-        seq = self.reader[read.id]
+        seq = list(self.reader[read.id])[0].sequence.upper()
+
         if read.orientation == "-":
             seq = dinopy.reverse_complement(seq)
 
