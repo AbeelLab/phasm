@@ -7,51 +7,58 @@ Tools to convert a NetworkX assembly graph to a GFA file.
 
 from typing import TextIO, Mapping
 
-import numpy
-import gfapy
-
 from phasm.alignments import Read, LocalAlignment, Strand
 from phasm.assembly_graph import AssemblyGraph
 
 
-def parse_gfa_line(line: str):
-    return gfapy.Line(line)
-
-
-def gfa_line_to_read(line: gfapy.Line):
-    if not str(line).startswith('S'):
+def gfa_line_to_read(line: str):
+    if not line.startswith('S'):
         raise ValueError("Given GFA2 line is not a segment.")
 
-    sequence = None
-    if not gfapy.is_placeholder(line.sequence):
-        sequence = numpy.array(line.sequence.encode('ascii'), dtype='S')
+    parts = line.strip().split('\t')
+    sid = parts[1].strip()
+    length = int(parts[2])
 
-    return Read(line.sid, line.slen, sequence)
+    sequence = None
+    if parts[3] != "*":
+        sequence = parts[3].encode('ascii')
+
+    return Read(sid, length, sequence)
+
+
+def _gfa_pos_to_int(pos: str):
+    if pos.endswith('$'):
+        return int(pos[:-1])
+
+    return int(pos)
 
 
 def gfa_line_to_la(reads: Mapping[str, Read]):
-    def mapper(line: gfapy.Line):
-        if not str(line).startswith('E'):
+    def mapper(line: str):
+        if not line.startswith('E'):
             raise ValueError('Given GFA2 line is not an edge.')
 
-        a_read = reads[line.sid1.name]
-        b_read = reads[line.sid2.name]
+        parts = line.strip().split('\t')
+        sid1 = parts[2].strip()
+        sid2 = parts[3].strip()
+        arange = tuple(map(_gfa_pos_to_int, parts[4:6]))
+        brange = tuple(map(_gfa_pos_to_int, parts[6:8]))
+        alignment = parts[8].strip()
+        tags = []
+        if len(parts) > 9:
+            tags.extend(parts[9:])
 
-        if line.sid1.orient == '-':
+        a_read = reads[sid1[:-1]]
+        b_read = reads[sid2[:-1]]
+
+        if sid1[-1] == '-':
             raise ValueError("A-read as reverse complement, unsupported by "
                              "phasm.")
 
-        strand = Strand.SAME if line.sid2.orient == '+' else Strand.OPPOSITE
+        strand = Strand.SAME if sid2[-1] == '+' else Strand.OPPOSITE
 
-        alignment = None
-        if isinstance(line.alignment, gfapy.CIGAR):
-            alignment = str(line.alignment)
-        elif isinstance(line.alignment, gfapy.Trace):
-            alignment = list(line.alignment)
-
-        return LocalAlignment(a_read, b_read, strand,
-                              (int(line.beg1), int(line.end1)),
-                              (int(line.beg2), int(line.end2)), alignment)
+        return LocalAlignment(a_read, b_read, strand, arange, brange,
+                              alignment)
 
     return mapper
 
