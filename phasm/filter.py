@@ -7,6 +7,7 @@ from phasm.alignments import LocalAlignment, AlignmentType
 class AlignmentFilter(metaclass=ABCMeta):
     def __init__(self):
         self._filtered = 0
+        self.nodes_to_remove = set()
         self.logger = logging.getLogger("{}.{}".format(
             __name__, self.__class__.__name__))
 
@@ -37,8 +38,18 @@ class MinReadLength(AlignmentFilter):
         self.min_read_length = min_read_length
 
     def filter(self, la: LocalAlignment):
-        return (len(la.a) >= self.min_read_length and
-                len(la.b) >= self.min_read_length)
+        if len(la.a) < self.min_read_length:
+            self.nodes_to_remove.add(la.a)
+            return False
+
+        if len(la.b) < self.min_read_length:
+            self.nodes_to_remove.add(la.b)
+            return False
+
+        if la.a in self.nodes_to_remove or la.b in self.nodes_to_remove:
+            return False
+
+        return True
 
 
 class MinOverlapLength(AlignmentFilter):
@@ -70,18 +81,17 @@ class ContainedReads(AlignmentFilter):
 
     def __init__(self):
         super().__init__()
-        self.contained_reads = set()
 
     def filter(self, la: LocalAlignment):
         la_type = la.classify()
 
         if la_type == AlignmentType.A_CONTAINED:
-            self.contained_reads.add(la.a)
+            self.nodes_to_remove.add(la.a)
             return False
         elif la_type == AlignmentType.B_CONTAINED:
-            self.contained_reads.add(la.b)
+            self.nodes_to_remove.add(la.b)
             return False
-        elif la.a in self.contained_reads or la.b in self.contained_reads:
+        elif la.a in self.nodes_to_remove or la.b in self.nodes_to_remove:
             return False
 
         return True
