@@ -9,7 +9,7 @@ strings, each representing a chromosome copy.
 import math
 import random
 import logging
-import itertools
+from itertools import combinations_with_replacement, product, zip_longest
 from typing import Union, Callable, List, Iterable, Mapping, Set
 from collections import OrderedDict, deque, defaultdict
 
@@ -46,8 +46,14 @@ class MismatchErrorModel(ErrorModel):
         num_matches = numpy.sum(matches)
         num_mismatches = len(read_seq) - num_matches
 
-        return ((1-self.error_prob)**num_matches *
-                self.error_prob**num_mismatches)
+        prob = 1.0
+        if num_matches > 0:
+            prob *= (1-self.error_prob)**num_matches
+
+        if num_mismatches > 0:
+            prob *= self.error_prob**num_mismatches
+
+        return prob
 
 
 class HaplotypeSet:
@@ -56,15 +62,22 @@ class HaplotypeSet:
     copy."""
 
     def __init__(self, ploidy: int):
-        # The nodes for each haplotype
-        self.haplotypes = [deque()] * ploidy
+        self.ploidy = ploidy
 
-        # The actual DNA sequence of each haplotype
-        self.haplotypes_dna = [bytearray()] * ploidy
+        # Nodes spelling each haplotype
+        self.haplotypes = []  # type: List[List[Node]]
+
+        # The actual DNA sequence for each haplotype
+        self.haplotypes_dna = []  # type: List[bytrarray]
 
         # Store for the reads spelling the haplotype DNA sequence where its
         # contribution to the DNA sequence starts
-        self.read_contribs = [{}] * ploidy  # type: List[ReadPositionT]
+        self.read_contribs = []  # type: List[Mapping[OrientedRead, int]]
+
+        for i in range(ploidy):
+            self.haplotypes.append(deque())
+            self.haplotypes_dna.append(bytearray())
+            self.read_contribs.append({})
 
         # Log likelihood of this haplotype set
         self.log_likelihood = 0.0
@@ -74,18 +87,26 @@ class HaplotypeSet:
         self.relevant_reads = defaultdict(dict)  # type: RelevantAlignmentsT
 
     def extend(self, g: AssemblyGraph, alignments: AlignmentsT,
-               extensions: List[List[Node]], last_bubble: bool=False):
+               extensions: List[List[Node]],
+               last_bubble: bool=False) -> 'HaplotypeSet':
         """Extend the haplotype set with a new set of paths."""
 
-        for hap_num, (haplotype_nodes, extension) in enumerate(
-                zip(self.haplotypes, extensions)):
+        # Make copies for the new set
+        new_set = HaplotypeSet(self.ploidy)
+        for i in range(self.ploidy):
+            new_set.haplotypes.append(list(self.haplotypes[i]))
+            new_set.haplotypes_dna.append(bytearray(self.haplotypes_dna[i]))
+            new_set.read_contribs.append(dict(self.read_contribs[i]))
+
+        for hap_num, extension in enumerate(extensions):
+            haplotype_nodes = new_set.haplotypes[hap_num]
 
             # Determine which read is responsible for which DNA segment of our
             # extension
-            pos = len(self.haplotypes_dna[hap_num])
-            self.read_contribs[hap_num].update(
-                self._get_read_contribs(g, pos, extension,
-                                        include_last=last_bubble)
+            pos = len(new_set.haplotypes_dna[hap_num])
+            new_set.read_contribs[hap_num].update(
+                new_set._get_read_contribs(g, pos, extension,
+                                           include_last=last_bubble)
             )
 
             # Spell the actual DNA sequence
@@ -95,7 +116,7 @@ class HaplotypeSet:
                 include_last=last_bubble
             )
 
-            self.haplotypes_dna[hap_num].extend(new_dna)
+            new_set.haplotypes_dna[hap_num].extend(new_dna)
 
             # Add the nodes of the extension to each haplotype
             if (len(haplotype_nodes) > 0 and
@@ -104,16 +125,25 @@ class HaplotypeSet:
             else:
                 haplotype_nodes.extend(extension)
 
+            logger.debug("H%d: %s", hap_num, haplotype_nodes)
+
             # Update the set of relevant reads, later to be used for likelihood
             # calculation
-            for node in extension:
+            extension_iter = (iter(extension) if last_bubble else
+                              iter(extension[:-1]))
+            for node in extension_iter:
                 if isinstance(node, MergedReads):
                     for read in node.reads:
-                        self._add_alignments_of_read(alignments, read,
-                                                     hap_num)
+                        new_set._add_alignments_of_read(alignments, read,
+                                                        hap_num)
                 else:
-                    self._add_alignments_of_read(alignments, node,
-                                                 hap_num)
+                    new_set._add_alignments_of_read(alignments, node,
+                                                    hap_num)
+
+        logger.debug("Extended haplotype. Number of relevant reads: %d",
+                     len(new_set.relevant_reads))
+
+        return new_set
 
     def _get_read_contribs(self, g: AssemblyGraph, start_pos: int,
                            path: List[Node],
@@ -124,19 +154,25 @@ class HaplotypeSet:
         total = start_pos
         for u, v, l in g.node_path_edges(path, data=g.edge_len):
             if isinstance(u, MergedReads):
-                for read, prefix_len in zip(u.reads, u.prefix_lengths):
+                # u.reads has one more element than prefix lengths, because
+                # prefix lengths are values on the edges between reads
+                for read, prefix_len in zip_longest(u.reads, u.prefix_lengths):
                     read_start_pos[read] = total
-                    total += prefix_len
+
+                    if prefix_len:
+                        total += prefix_len
             else:
                 read_start_pos[u] = total
-                total += prefix_len
+                total += l
 
         if include_last:
             if isinstance(path[-1], MergedReads):
-                for read, prefix_len in zip(path[-1].reads,
-                                            path[-1].prefix_lengths):
+                for read, prefix_len in zip_longest(path[-1].reads,
+                                                    path[-1].prefix_lengths):
                     read_start_pos[read] = total
-                    total += prefix_len
+
+                    if prefix_len:
+                        total += prefix_len
             else:
                 read_start_pos[path[-1]] = total
 
@@ -179,8 +215,14 @@ class HaplotypeSet:
             read_prob = self.calculate_read_prob(read, read_dna, anchor_points,
                                                  error_model, estimated_length)
 
-            if read_prob > 0.0:
-                self.log_likelihood += math.log10(read_prob)
+            if read_prob == 0.0:
+                # Smallest possible positive floating point number (i.e. a
+                # very low probability)
+                read_prob = numpy.nextafter(0, 1)
+
+            self.log_likelihood += math.log10(read_prob)
+
+        logger.debug("Updated log-likelihood: %.2f", self.log_likelihood)
 
     def calculate_read_prob(self, read: OrientedRead, read_dna: bytes,
                             anchor_points: AnchorPointsT,
@@ -240,7 +282,7 @@ class HaplotypeSet:
 
 class HaploGraphPhaser:
     def __init__(self, g: AssemblyGraph,
-                 alignments: Mapping[Node, Set[LocalAlignment]],
+                 alignments: AlignmentsT,
                  ploidy: int,
                  error_model: ErrorModel,
                  threshold: PruneParam,
@@ -318,11 +360,6 @@ class HaploGraphPhaser:
         """Generate all new possible haplotype extensions for a
         bubble (`source`, `sink`)."""
 
-        bubble_alignments = set()
-        for node in superbubble_nodes(self.g, source, sink):
-            if node in self.alignments:
-                bubble_alignments.update(self.alignments[node])
-
         new_haplotype_sets = []
         for haplotype_set in self.possible_haplotypes:
             new_haplotype_sets.extend(
@@ -335,43 +372,46 @@ class HaploGraphPhaser:
         """For a given haplotype set, generate all possible extensions at the
         given bubble."""
 
-        possible_paths = networkx.all_simple_paths(self.g, source, sink)
+        possible_paths = list(networkx.all_simple_paths(self.g, source, sink))
+        logger.debug("%d possible paths through bubble <%r, %r>",
+                     len(possible_paths), source, sink)
 
         threshold = self.threshold
         if callable(threshold):
             threshold = threshold(bubble_num / self.num_bubbles)
 
-        threshold = math.log10(threshold)
+        if threshold > 0.0:
+            threshold = math.log10(threshold)
+        else:
+            threshold = float('-inf')
 
         if bubble_num == 0:
             # For the first bubble the order does not matter, as a permutation
             # in a different order will in the end result in the same haplotype
             # set
-            extension_iter = iter(
-                itertools.combinations_with_replacement(possible_paths,
-                                                        self.ploidy)
-            )
+            extension_iter = iter(combinations_with_replacement(possible_paths,
+                                                                self.ploidy))
         else:
-            extension_iter = iter(itertools.product(possible_paths,
-                                                    repeat=self.ploidy))
+            extension_iter = iter(product(possible_paths, repeat=self.ploidy))
 
         for extension in extension_iter:
-            haplotype_set.extend(self.g, self.alignments, extension,
-                                 bubble_num == self.num_bubbles-1)
-            haplotype_set.calculate_rl(self.g, self.error_model,
-                                       self.approx_length)
+            logger.debug("Extension %s", extension)
+            new_set = haplotype_set.extend(self.g, self.alignments, extension,
+                                           bubble_num == self.num_bubbles-1)
+            new_set.calculate_rl(self.g, self.error_model, self.approx_length)
 
-            if haplotype_set.relative_likelihood > threshold:
-                yield haplotype_set
+            if new_set.log_likelihood > threshold:
+                yield new_set
 
     def prune(self, prune_factor: PruneParam, bubble_num: int):
         """Prune the list of possible haplotypes, by removing unlikely
         haplotypes, compared to the most likely haplotype."""
 
+        num_before = len(self.possible_haplotypes)
+        logger.debug("Number of possible haplotypes: %d", num_before)
+
         if len(self.possible_haplotypes) < 2:
             return
-
-        num_before = len(self.possible_haplotypes)
 
         if callable(prune_factor):
             prune_factor = prune_factor(bubble_num / (self.num_bubbles-1))
