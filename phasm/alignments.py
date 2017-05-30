@@ -54,7 +54,8 @@ class DNASegment(metaclass=ABCMeta):
 
 
 class OrientedDNASegment(metaclass=ABCMeta):
-    @abstractproperty
+    @property
+    @abstractmethod
     def orientation(self):
         """Return the orientation of a read. Denoted as a '+' or a '-'."""
 
@@ -206,6 +207,11 @@ class MergedReads(OrientedDNASegment):
 
     def __str__(self):
         return self.id + self.strand
+
+    def __repr__(self):
+        return "MergedReads[r0={}...r{}={}, length={}]".format(
+            self.reads[0], len(self.reads)-1, self.reads[-1], self.length
+        )
 
 
 class LocalAlignment:
