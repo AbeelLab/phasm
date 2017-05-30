@@ -2,6 +2,7 @@
 Identify superbubbles in an assembly graph.
 """
 
+import logging
 import random
 from enum import Enum
 from typing import Iterator, Tuple, Hashable, NamedTuple, Set
@@ -14,6 +15,12 @@ from phasm.rmq import RangeMinimumQuery, RangeMaximumQuery
 
 Node = Hashable
 Bubble = Tuple[Node, Node]
+
+logger = logging.getLogger(__name__)
+
+
+class BubbleError(Exception):
+    pass
 
 
 class CandidateType(Enum):
@@ -69,6 +76,13 @@ def partition_graph(g: AssemblyGraph) -> Iterator[Tuple[AssemblyGraph, bool]]:
     for u, v in g.out_edges(singleton_nodes):
         if v not in subgraph:
             subgraph.add_edge(u, 're_')
+
+    sink_nodes = [n for n in subgraph.nodes_iter()
+                  if subgraph.out_degree(n) == 0]
+    for n in sink_nodes:
+        if n == 're_':
+            continue
+        subgraph.add_edge(n, 're_')
 
     yield subgraph, True
 
@@ -175,6 +189,22 @@ class SuperBubbleFinderDAG:
     """
 
     def __init__(self, g: AssemblyGraph):
+        num_sources = 0
+        num_sinks = 0
+        for n in g.nodes_iter():
+            if g.in_degree(n) == 0:
+                num_sources += 1
+
+            if g.out_degree(n) == 0:
+                num_sinks += 1
+
+        if num_sources != 1 or num_sinks != 1:
+            raise BubbleError(
+                "SuperBubbleFinderDAG only works with graphs with exactly "
+                "one source and one sink. Got a graph with {} source nodes "
+                "and {} sink nodes.".format(num_sources, num_sinks)
+            )
+
         self.g = g
         self.topo_sorted = networkx.topological_sort(g)
         self.ordering = {
@@ -199,12 +229,12 @@ class SuperBubbleFinderDAG:
         ]
         self.out_child_rmq = RangeMaximumQuery(self.out_child)
 
-        self.previous_entrance = {}  # type: Dict[Node, Node]
-        self.alternative_entrance = {}  # type: Dict[Node, Node]
+        self.previous_entrance = {}  # type: Mapping[Node, Node]
+        self.alternative_entrance = {}  # type: Mapping[Node, Node]
 
         # Build candidates
         self.candidates = []  # type: List[Candidate]
-        self.v_to_candidate_index = {}  # type: Dict[Node, int]
+        self.v_to_candidate_index = {}  # type: Mapping[Node, int]
 
         # Keep track of the last seen entrance in the candidates list, used to
         # fill the previous_entrance dictionary
@@ -327,6 +357,13 @@ def find_superbubbles(g: AssemblyGraph) -> Iterator[Bubble]:
     """
 
     for partition, acyclic in partition_graph(g):
+        num_sources = len([n for n in partition.nodes_iter() if
+                           partition.in_degree(n) == 0])
+        num_sinks = len([n for n in partition.nodes_iter() if
+                         partition.out_degree(n) == 0])
+        logger.debug("Partition with %d nodes with in-degree 0, %d nodes with "
+                     "out-degree 0, acyclic: %s", num_sources, num_sinks,
+                     acyclic)
         if acyclic:
             superbubble_finder = SuperBubbleFinderDAG(partition)
             yield from (b for b in superbubble_finder if 'r_' not in b
@@ -369,7 +406,7 @@ def superbubble_nodes(g: AssemblyGraph, source: Node,
     """Find all nodes inside a superbubble."""
 
     queue = deque([source])
-    visited = set([source, sink])
+    visited = {source, sink}
 
     while queue:
         current = queue.popleft()
