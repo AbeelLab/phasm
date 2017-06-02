@@ -6,7 +6,7 @@ import logging
 import random
 from enum import Enum
 from typing import Iterator, Tuple, Hashable, NamedTuple, Set
-from collections import deque
+from collections import deque, OrderedDict
 
 import networkx
 
@@ -188,12 +188,17 @@ class SuperBubbleFinderDAG:
                        http://arxiv.org/abs/1505.04019
     """
 
-    def __init__(self, g: AssemblyGraph):
+    def __init__(self, g: AssemblyGraph, report_nested=True):
+        self.report_nested = report_nested
+
+        # Check if graph is valid
         num_sources = 0
         num_sinks = 0
+        source_node = None
         for n in g.nodes_iter():
             if g.in_degree(n) == 0:
                 num_sources += 1
+                source_node = n
 
             if g.out_degree(n) == 0:
                 num_sinks += 1
@@ -206,10 +211,8 @@ class SuperBubbleFinderDAG:
             )
 
         self.g = g
-        self.topo_sorted = networkx.topological_sort(g)
-        self.ordering = {
-            v: i for i, v in enumerate(self.topo_sorted)
-        }
+        self.ordering = OrderedDict(self.toplogical_sort(self.g, source_node))
+        self.topo_sorted = list(self.ordering.keys())
 
         # Prepare arrays for minimum/maximum query in a range
         # (Range minimum/maximum query problem)
@@ -228,6 +231,10 @@ class SuperBubbleFinderDAG:
             for i in range(len(self.topo_sorted))
         ]
         self.out_child_rmq = RangeMaximumQuery(self.out_child)
+
+        logger.debug("Topological ordering: %s", self.topo_sorted)
+        logger.debug("Out parent: %s", self.out_parent)
+        logger.debug("Out child: %s", self.out_child)
 
         self.previous_entrance = {}  # type: Mapping[Node, Node]
         self.alternative_entrance = {}  # type: Mapping[Node, Node]
@@ -249,10 +256,34 @@ class SuperBubbleFinderDAG:
                 self.candidates.append(Candidate(v, CandidateType.EXIT))
 
             if self._is_entrance(v):
-                # Only keep entrance index if both exit and entrance
+                # This overwrites the exit candidate index, which is not needed
+                # if both entrance and exit
                 self.v_to_candidate_index[v] = len(self.candidates)
                 self.candidates.append(Candidate(v, CandidateType.ENTRANCE))
                 prev_entr = v
+
+        logger.debug("Candidates at start: %s", self.candidates)
+
+    def toplogical_sort(self, g: AssemblyGraph, source: Node):
+        n = networkx.number_of_nodes(g)
+        visited = set()
+        order = n-1
+        ordering = deque()
+
+        def _toposort_recurse(source):
+            nonlocal g, order, visited
+
+            visited.add(source)
+
+            for neighbour in g.neighbors_iter(source):
+                if neighbour not in visited:
+                    _toposort_recurse(neighbour)
+
+            ordering.appendleft((source, order))
+            order -= 1
+
+        _toposort_recurse(source)
+        return ordering
 
     def _is_entrance(self, v: Node):
         for n in self.g.neighbors_iter(v):
@@ -307,9 +338,15 @@ class SuperBubbleFinderDAG:
             # Check for nested superbubbles
             while self.candidates[-1].v != possible_start:
                 if self.candidates[-1].type == CandidateType.EXIT:
-                    yield from self._check_candidates(
+                    nested_iter = iter(self._check_candidates(
                         self.v_to_candidate_index[possible_start]+1,
-                        len(self.candidates)-1)
+                        len(self.candidates)-1))
+                    if self.report_nested:
+                        yield from nested_iter
+                    else:
+                        # pass through nested bubbles, but don't report them
+                        for bubble in nested_iter:
+                            pass
                 else:
                     self.candidates.pop()
 
@@ -339,7 +376,8 @@ class SuperBubbleFinderDAG:
         return self.previous_entrance[outparent_v]
 
 
-def find_superbubbles(g: AssemblyGraph) -> Iterator[Bubble]:
+def find_superbubbles(g: AssemblyGraph,
+                      report_nested: bool=True) -> Iterator[Bubble]:
     """Find superbubbles in a general directed graph.
 
     This algorithm first partitions the graph into several subgraphs,
@@ -364,13 +402,19 @@ def find_superbubbles(g: AssemblyGraph) -> Iterator[Bubble]:
         logger.debug("Partition with %d nodes with in-degree 0, %d nodes with "
                      "out-degree 0, acyclic: %s", num_sources, num_sinks,
                      acyclic)
+
+        networkx.write_graphml(partition, "last_partition.graphml")
+
+        if g.has_node('read1735-'):
+            logger.setLevel(logging.DEBUG)
+
         if acyclic:
-            superbubble_finder = SuperBubbleFinderDAG(partition)
+            superbubble_finder = SuperBubbleFinderDAG(partition, report_nested)
             yield from (b for b in superbubble_finder if 'r_' not in b
                         and 're_' not in b)
         else:
             dag, dfs_tree = graph_to_dag(partition)
-            superbubble_finder = SuperBubbleFinderDAG(dag)
+            superbubble_finder = SuperBubbleFinderDAG(dag, report_nested)
 
             superbubbles = set(iter(superbubble_finder))
 
