@@ -19,7 +19,7 @@ import networkx
 from phasm.alignments import (OrientedRead, LocalAlignment, MergedReads,
                               AlignmentType)
 from phasm.assembly_graph import AssemblyGraph
-from phasm.bubbles import find_superbubbles, Node, superbubble_nodes
+from phasm.bubbles import find_superbubbles, Node
 
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ class PhasingError(Exception):
     pass
 
 
-class MismatchErrorModel(ErrorModel):
+class MismatchErrorModel:
     def __init__(self, error_prob: float):
         self.error_prob = error_prob
 
@@ -301,7 +301,8 @@ class HaploGraphPhaser:
 
     def phase(self):
         # find_superbubbles finds superbubbles in reverse topological order
-        bubbles = OrderedDict(b for b in find_superbubbles(self.g))
+        bubbles = OrderedDict(b for b in
+                              find_superbubbles(self.g, report_nested=False))
         bubble_sources = set(bubbles.keys())
         self.num_bubbles = len(bubbles)
 
@@ -318,6 +319,7 @@ class HaploGraphPhaser:
 
         # Calculate approximate haplotype lengths, by averaging the length of
         # a few random paths from start to end
+        logger.debug("Superbubbles: %s", bubbles)
         self.approx_length = self._calculate_approx_length(bubbles)
 
         logger.info("Start phasing haplograph with %d bubbles and approximated"
