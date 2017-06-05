@@ -15,6 +15,7 @@ from collections import OrderedDict, deque, defaultdict
 
 import numpy
 import networkx
+from scipy.stats import norm
 
 from phasm.alignments import (OrientedRead, LocalAlignment, MergedReads,
                               AlignmentType)
@@ -38,13 +39,14 @@ class PhasingError(Exception):
 
 
 class MismatchErrorModel:
-    def __init__(self, error_prob: float):
+    def __init__(self, error_prob, std):
         self.error_prob = error_prob
+        self.std = std
 
     def __call__(self, haplo_seq: numpy.array, read_seq: numpy.array) -> float:
         matches = haplo_seq == read_seq
         num_matches = numpy.sum(matches)
-        num_mismatches = len(read_seq) - num_matches
+        num_mismatches = int(len(read_seq) - num_matches)
 
         prob = 1.0
         if num_matches > 0:
@@ -61,7 +63,7 @@ class HaplotypeSet:
     (spelled by the corresponding nodes) each representing a chromosome
     copy."""
 
-    def __init__(self, ploidy: int):
+    def __init__(self, ploidy: int, copy_from: 'HaplotypeSet'=None):
         self.ploidy = ploidy
 
         # Nodes spelling each haplotype
@@ -74,13 +76,20 @@ class HaplotypeSet:
         # contribution to the DNA sequence starts
         self.read_contribs = []  # type: List[Mapping[OrientedRead, int]]
 
-        for i in range(ploidy):
-            self.haplotypes.append(deque())
-            self.haplotypes_dna.append(bytearray())
-            self.read_contribs.append({})
+        if isinstance(copy_from, HaplotypeSet):
+            for i in range(ploidy):
+                self.haplotypes.append(deque(copy_from.haplotypes[i]))
+                self.haplotypes_dna.append(
+                    bytearray(copy_from.haplotypes_dna[i]))
+                self.read_contribs.append(dict(copy_from.read_contribs[i]))
+        else:
+            for i in range(ploidy):
+                self.haplotypes.append(deque())
+                self.haplotypes_dna.append(bytearray())
+                self.read_contribs.append({})
 
         # Log likelihood of this haplotype set
-        self.log_likelihood = 0.0
+        self.log_likelihood = float('-inf')
 
         # For each haplotype keep a list of relevant reads (local alignments)
         # which will be used for likelihood calculation
@@ -91,12 +100,8 @@ class HaplotypeSet:
                last_bubble: bool=False) -> 'HaplotypeSet':
         """Extend the haplotype set with a new set of paths."""
 
-        # Make copies for the new set
-        new_set = HaplotypeSet(self.ploidy)
-        for i in range(self.ploidy):
-            new_set.haplotypes.append(list(self.haplotypes[i]))
-            new_set.haplotypes_dna.append(bytearray(self.haplotypes_dna[i]))
-            new_set.read_contribs.append(dict(self.read_contribs[i]))
+        # Make a copy of itself for a new set
+        new_set = HaplotypeSet(self.ploidy, copy_from=self)
 
         for hap_num, extension in enumerate(extensions):
             haplotype_nodes = new_set.haplotypes[hap_num]
@@ -209,6 +214,7 @@ class HaplotypeSet:
     def calculate_rl(self, g: AssemblyGraph, error_model: ErrorModel,
                      estimated_length: int):
         self.log_likelihood = 0.0
+        num_reads = 0
 
         for read, anchor_points in self.relevant_reads.items():
             read_dna = g.get_sequence(read)
@@ -221,6 +227,11 @@ class HaplotypeSet:
                 read_prob = numpy.nextafter(0, 1)
 
             self.log_likelihood += math.log10(read_prob)
+            num_reads += 1
+
+        if num_reads == 0:
+            logger.warning("Haplotype set with no relevant reads.")
+            self.log_likelihood = float('-inf')
 
         logger.debug("Updated log-likelihood: %.2f", self.log_likelihood)
 
@@ -246,6 +257,9 @@ class HaplotypeSet:
             # on to the next bubble.
             seq_length = min(len(haplotype_dna[hseq_start:]),
                              len(read_dna))
+
+            if seq_length == 0:
+                continue
 
             # Get the subsequences which we're going to compare
             read_subseq = read_dna[:seq_length]
@@ -306,8 +320,10 @@ class HaploGraphPhaser:
         bubble_sources = set(bubbles.keys())
         self.num_bubbles = len(bubbles)
 
-        start_points = [n for n in self.g if self.g.in_degree(n) == 0]
-        end_points = [n for n in self.g if self.g.out_degree(n) == 0]
+        start_points = [n for n in self.g.nodes_iter()
+                        if self.g.in_degree(n) == 0]
+        end_points = [n for n in self.g.nodes_iter()
+                      if self.g.out_degree(n) == 0]
 
         if len(start_points) > 1:
             raise PhasingError("There are multiple nodes with in-degree 0, "
@@ -331,8 +347,8 @@ class HaploGraphPhaser:
         while curr_node:
             if curr_node in bubble_sources:
                 # Update possible haplotype sets
-                logger.debug("Branch and prune for bubble %d/%d",
-                             bubble_num+1, self.num_bubbles)
+                logger.info("Branch and prune for bubble %d/%d",
+                            bubble_num+1, self.num_bubbles)
                 self.branch(curr_node, bubbles[curr_node], bubble_num)
                 self.prune(self.prune_factor, bubble_num)
 
@@ -362,6 +378,9 @@ class HaploGraphPhaser:
         """Generate all new possible haplotype extensions for a
         bubble (`source`, `sink`)."""
 
+        if len(self.possible_haplotypes) == 0:
+            logger.warning("No possible haplotypes available.")
+
         new_haplotype_sets = []
         for haplotype_set in self.possible_haplotypes:
             new_haplotype_sets.extend(
@@ -375,8 +394,8 @@ class HaploGraphPhaser:
         given bubble."""
 
         possible_paths = list(networkx.all_simple_paths(self.g, source, sink))
-        logger.debug("%d possible paths through bubble <%r, %r>",
-                     len(possible_paths), source, sink)
+        logger.info("%d possible paths through bubble <%r, %r>",
+                    len(possible_paths), source, sink)
 
         threshold = self.threshold
         if callable(threshold):
@@ -402,6 +421,8 @@ class HaploGraphPhaser:
                                            bubble_num == self.num_bubbles-1)
             new_set.calculate_rl(self.g, self.error_model, self.approx_length)
 
+            logger.info("%.3f, threshold: %.3f", new_set.log_likelihood,
+                        threshold)
             if new_set.log_likelihood > threshold:
                 yield new_set
 
@@ -422,6 +443,11 @@ class HaploGraphPhaser:
 
         max_likelihood = max(hs.log_likelihood for hs in
                              self.possible_haplotypes)
+
+        if prune_factor == 1.0:
+            logger.info("Max log-likelihood: %.3f", max_likelihood)
+            logger.info("Other likelihoods: %s", ", ".join(
+                hs.log_likelihood for hs in self.possible_haplotypes))
 
         self.possible_haplotypes = [
             hs for hs in self.possible_haplotypes if
