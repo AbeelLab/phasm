@@ -445,6 +445,7 @@ def merge_unambiguous_paths(g: AssemblyGraph):
     ]
 
     num_merged_nodes = 0
+    counter = 0
 
     for start in start_points:
         if g.out_degree(start) != 1:
@@ -471,7 +472,7 @@ def merge_unambiguous_paths(g: AssemblyGraph):
                                nodes_to_merge))
 
         # Create the new node and copy the required edges
-        new_id = "[" + "|".join(str(r) for r in nodes_to_merge) + "]"
+        new_id = "merged{}".format(counter)
         prefix_lengths = [l for u, v, l in
                           g.node_path_edges(nodes_to_merge, g.edge_len)]
         new_unmatched_prefix = sum(prefix_lengths)
@@ -482,12 +483,14 @@ def merge_unambiguous_paths(g: AssemblyGraph):
                                nodes_to_merge[0].orientation, nodes_to_merge,
                                prefix_lengths)
         g.add_node(new_node)
+        g.node[new_node]['merged_reads'] = ", ".join(
+            str(n) for n in nodes_to_merge)
 
         # Incoming edges
         logger.debug("In degree of first node: %d",
                      g.in_degree(nodes_to_merge[0]))
         for u, v, data in g.in_edges_iter(nodes_to_merge[0], data=True):
-            g.add_edge(u, new_node, **data)
+            g.add_edge(u, new_node, dict(**data))
 
         # Outgoing edges
         logger.debug("Out degree of last node: %d",
@@ -508,5 +511,6 @@ def merge_unambiguous_paths(g: AssemblyGraph):
                      g.in_degree(new_node), g.out_degree(new_node))
 
         num_merged_nodes += len(nodes_to_merge)
+        counter += 1
 
     return num_merged_nodes
