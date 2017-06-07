@@ -15,7 +15,6 @@ from collections import OrderedDict, deque, defaultdict
 
 import numpy
 import networkx
-from scipy.stats import norm
 
 from phasm.alignments import (OrientedRead, LocalAlignment, MergedReads,
                               AlignmentType)
@@ -161,11 +160,18 @@ class HaplotypeSet:
             if isinstance(u, MergedReads):
                 # u.reads has one more element than prefix lengths, because
                 # prefix lengths are values on the edges between reads
+                merged_total = 0
                 for read, prefix_len in zip_longest(u.reads, u.prefix_lengths):
-                    read_start_pos[read] = total
+                    read_start_pos[read] = total + merged_total
 
                     if prefix_len:
-                        total += prefix_len
+                        merged_total += prefix_len
+                    else:
+                        # This happens for the last merged node. This length is
+                        # the total length of the edge between the merged node
+                        # and the next node, minus the length of the edges
+                        # between merged reads
+                        total += merged_total + (l - merged_total)
             else:
                 read_start_pos[u] = total
                 total += l
