@@ -12,18 +12,24 @@ from phasm.assembly_graph import (build_assembly_graph,
                                   merge_unambiguous_paths)
 from phasm.filter import ContainedReads, MaxOverhang, MinReadLength
 from phasm.walker import build_haplographs
-from phasm.phasing import HaploGraphPhaser, MismatchErrorModel
+from phasm.phasing import HaploGraphPhaser
 
 logging.basicConfig()
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 
-def phase_haplograph(hg, alignments, error_model):
-    phaser = HaploGraphPhaser(hg, alignments, 3, error_model, 0.1, 0.8)
+def phase_haplograph(hg, alignments):
+    phaser = HaploGraphPhaser(hg, alignments, 3, 0.0, 0.7)
 
     haplotypes = phaser.phase()
+    if len(haplotypes) == 0:
+        logger.warning("No haplotypes returned.")
+        return None
+
     logger.info("Got %d equally likely possible haplotypes", len(haplotypes))
+    for i, haplotype in enumerate(haplotypes[0].haplotypes):
+        logger.info("len(H%d): %d nodes", i, len(haplotype))
 
     return haplotypes[0]
 
@@ -157,38 +163,36 @@ if __name__ == '__main__':
     # Start with reading all pairwise mappings, so we can easily retreive which
     # reads we need for likelihood calculation
     logger.info("Reading all pairwise mappings...")
-    pairwise_mappings = defaultdict(list)
+    read_alignments = defaultdict(set)
     with open(args.gfa_file) as f:
         la_iter = map(gfa.gfa_line_to_la(reads),
                       (l for l in f if l.startswith('E')))
 
         for la in la_iter:
             a_read, b_read = la.get_oriented_reads()
-            pairwise_mappings[a_read].append(la)
+            read_alignments[a_read].add(la)
+            read_alignments[b_read].add(la)
 
     logger.info("Done.")
 
     sequence_source = sequences.FastaSource(args.sequences_file)
     g.sequence_src = sequence_source
 
-    error_model = MismatchErrorModel(0.01)
-
     logger.info("Building haplographs...")
     num_components = 0
     num_haplographs = 0
 
-    logger.setLevel(logging.DEBUG)
     with dinopy.FastaWriter("output.fasta", force_overwrite=True) as fw:
         for i, component in enumerate(
                 networkx.weakly_connected_component_subgraphs(g, copy=False)):
-            logger.debug("Connected Component %d with %d nodes and %d edges",
-                         i, networkx.number_of_nodes(component),
-                         networkx.number_of_edges(component))
+            logger.info("Connected Component %d with %d nodes and %d edges",
+                        i, networkx.number_of_nodes(component),
+                        networkx.number_of_edges(component))
 
             for j, haplograph in enumerate(build_haplographs(component)):
-                logger.debug("- Haplograph %d with %d nodes and %d edges",
-                             j, networkx.number_of_nodes(haplograph),
-                             networkx.number_of_edges(haplograph))
+                logger.info("- Haplograph %d with %d nodes and %d edges",
+                            j, networkx.number_of_nodes(haplograph),
+                            networkx.number_of_edges(haplograph))
 
                 filename = "component{}.haplograph{}.gfa".format(i, j)
                 with open(filename, "w") as f:
@@ -199,19 +203,33 @@ if __name__ == '__main__':
 
                 if networkx.number_of_nodes(haplograph) == 1:
                     seq = g.get_sequence(haplograph.nodes()[0])
+                    name = "haplotig%d.%d" % (i, j)
                     fw.write_entry(
-                        (seq, b"haplotig%d.%d" % (num_haplographs, 0)))
+                        (seq, name.encode('ascii')))
                 else:
-                    haplotypes = phase_haplograph(haplograph,
-                                                  pairwise_mappings,
-                                                  error_model)
-                    for h, haplotype in enumerate(haplotypes):
-                        seq = g.sequence_for_path(haplotype)
+                    haplotype_set = phase_haplograph(haplograph,
+                                                     read_alignments)
+                    if not haplotype_set:
+                        logger.warning("No valid haplotype set obtained.")
+                        num_haplographs += 1
+                        continue
+
+                    for h, nodes in enumerate(haplotype_set.haplotypes):
+                        print(nodes)
+                        seq = g.sequence_for_path(
+                            g.node_path_edges(nodes, data=True),
+                            include_last=True
+                        )
+                        name = "haplotig%d.%d.%d" % (i, j, h)
                         fw.write_entry(
-                            (seq, b"haplotig%d.%d" % (num_haplographs, h)))
+                            (seq, name.encode('ascii')))
 
                 num_haplographs += 1
 
+            # Clear cache to remove reads from memory because in different
+            # connected component the chance of requiring the same reads are
+            # small
+            g.sequence_src.cache = {}
             num_components += 1
 
     logger.info("Built %d haplographs from %d weakly connected components.",

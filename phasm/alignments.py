@@ -1,5 +1,5 @@
 import enum
-from abc import ABCMeta, abstractmethod, abstractproperty
+from abc import ABCMeta, abstractmethod
 from typing import List, Tuple, Union
 
 import numpy
@@ -143,17 +143,17 @@ class OrientedRead(OrientedDNASegment):
             raise AttributeError("OrientedRead has no attribute '{}'".format(
                 key))
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.read)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return str(self.read) + self.orientation
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return "OrientedRead[id={0.id}{0.strand}, len={0.read.length}]".format(
             self)
 
-    def __eq__(self, other):
+    def __eq__(self, other) -> bool:
         if not isinstance(other, self.__class__):
             return False
 
@@ -192,25 +192,26 @@ class MergedReads(OrientedDNASegment):
         return MergedReads(self.id, self.length, new_strand,
                            [r.reverse() for r in reversed(self.reads)])
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash(str(self))
 
-    def __eq__(self, other):
+    def __eq__(self, other) -> bool:
         if not isinstance(other, self.__class__):
             return False
 
         return (self.id == other.id and self.strand == other.strand and
                 self.length == other.length)
 
-    def __len__(self):
+    def __len__(self) -> int:
         return self.length
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.id + self.strand
 
-    def __repr__(self):
-        return "MergedReads[r0={}...r{}={}, length={}]".format(
-            self.reads[0], len(self.reads)-1, self.reads[-1], self.length
+    def __repr__(self) -> str:
+        return "MergedReads[id={}, r0={}...r{}={}, length={}]".format(
+            self.id, self.reads[0], len(self.reads)-1, self.reads[-1],
+            self.length
         )
 
 
@@ -250,16 +251,27 @@ class LocalAlignment:
             '+' if self.strand == Strand.SAME else '-')
 
     @property
-    def a_id(self):
+    def a_id(self) -> str:
         return self.a.id
 
     @property
-    def b_id(self):
+    def b_id(self) -> str:
         return self.b.id
 
-    def __len__(self):
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, LocalAlignment):
+            return False
+
+        return (self.a == other.a and self.b == other.b and
+                self.strand == other.strand and self.arange == other.arange
+                and self.brange == other.brange)
+
+    def __hash__(self) -> int:
+        return hash((self.a, self.b, self.strand, self.arange, self.brange))
+
+    def __len__(self) -> int:
         return self.get_overlap_length()
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return ("LocalAlignment[a={0.a_id}, b={0.b_id}, arange={0.arange}, "
                 "brange={0.brange}, strand={0.strand}]".format(self))
