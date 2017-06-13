@@ -6,35 +6,50 @@ This module contains the algorithm to phase a haplograph to a set of linear DNA
 strings, each representing a chromosome copy.
 """
 
+import math
 import random
 import logging
 from itertools import combinations_with_replacement, product
-from typing import Union, Callable, List, Iterable, Mapping, Set, Tuple
-from collections import OrderedDict, deque
+from typing import List, Iterable, Set, Tuple
+from collections import OrderedDict, deque, Counter
 
-import numpy
 import networkx
+from scipy.stats import norm
 
 from phasm.alignments import (OrientedRead, OrientedDNASegment, LocalAlignment,
                               MergedReads)
-from phasm.assembly_graph import AssemblyGraph
+from phasm.assembly_graph import AssemblyGraph, average_coverage_path
 from phasm.bubbles import find_superbubbles, superbubble_nodes
-
+from phasm.typing import Node, AlignmentsT, PruneParam
 
 logger = logging.getLogger(__name__)
-
-Node = OrientedDNASegment
-AlignmentsT = Mapping[OrientedRead, Set[LocalAlignment]]
-ReadPositionT = Mapping[OrientedRead, int]
-AnchorPointsT = Mapping[int, LocalAlignment]
-RelevantAlignmentsT = Mapping[OrientedRead, AnchorPointsT]
-
-ErrorModel = Callable[[numpy.array, numpy.array], float]
-PruneParam = Union[float, Callable[[float], float]]
 
 
 class PhasingError(Exception):
     pass
+
+
+class CoverageModel:
+    """When we use a certain path through a bubble multiple times (for multiple
+    haplotypes), then you would expect that the average coverage for this path
+    is higher.
+
+    This model tries to calculate the probability that a certain path occurs
+    in multiple haplotypes by assuming that the average coverage is normally
+    distributed, and looks at the difference between the expected coverage and
+    the actual average coverage."""
+
+    def __init__(self, mu: float, sigma: float):
+        self.mu = mu
+        self.sigma = sigma
+
+    def calculate_prob(self, multiplicity: int, avg_coverage: float):
+        mu = self.mu * multiplicity
+        sigma = self.sigma * multiplicity
+
+        difference = math.fabs(mu - avg_coverage)
+
+        return 2*norm.cdf(mu - difference, loc=mu, scale=sigma)
 
 
 class HaplotypeSet:
@@ -95,11 +110,13 @@ class HaploGraphPhaser:
     def __init__(self, g: AssemblyGraph,
                  alignments: AlignmentsT,
                  ploidy: int,
+                 coverage_model: CoverageModel,
                  threshold: PruneParam,
                  prune_factor: PruneParam):
         self.g = g
         self.alignments = alignments
         self.ploidy = ploidy
+        self.coverage_model = coverage_model
 
         self.num_bubbles = 0
         self.prev_bubble = None
@@ -256,11 +273,8 @@ class HaploGraphPhaser:
             for hap_ext in extension:
                 ext_read_sets.append(self.get_extension_reads(hap_ext))
 
-            if len(spanning_alignments) > 0:
-                rl = self.calculate_rl(haplotype_set, extension,
-                                       ext_read_sets, spanning_alignments)
-            else:
-                rl = 1.0
+            rl = self.calculate_rl(haplotype_set, extension, ext_read_sets,
+                                   spanning_alignments, bubble_num)
 
             if rl >= threshold:
                 new_set = haplotype_set.extend(extension, ext_read_sets)
@@ -315,6 +329,8 @@ class HaploGraphPhaser:
         if isinstance(exit, MergedReads):
             for read in exit.reads:
                 exit_reads.add(read)
+        else:
+            exit_reads.add(exit)
 
         alignments = set()
 
@@ -360,9 +376,26 @@ class HaploGraphPhaser:
 
     def calculate_rl(self, hs: HaplotypeSet, extension: List[Tuple[Node]],
                      ext_read_sets: List[Set[OrientedRead]],
-                     spanning_alignments: Set[LocalAlignment]) -> float:
+                     spanning_alignments: Set[LocalAlignment],
+                     bubble_num: int) -> float:
         """Calculate the relative likelihood of a haplotype set extension,
         assuming the given haplotype set is correct."""
+
+        # Count how often a path is used in this haplotype set
+        multiplicities = Counter(extension)
+
+        coverage_prob = 1.0
+        include_last = bubble_num == self.num_bubbles - 1
+        for path in extension:
+            avg_coverage = average_coverage_path(
+                self.g, self.alignments, path, include_last)
+
+            coverage_prob *= self.coverage_model.calculate_prob(
+                multiplicities[path], avg_coverage)
+
+        logger.debug("Coverage probability: %.3f", coverage_prob)
+        if len(spanning_alignments) == 0:
+            return coverage_prob
 
         hs_spanning_alignments = set()
         for la in spanning_alignments:
@@ -381,6 +414,8 @@ class HaploGraphPhaser:
         relative_likelihood = (len(hs_spanning_alignments) /
                                len(spanning_alignments))
 
-        # TODO: Include coverage analysis
+        logger.debug("Relative likelihood: %.3f", relative_likelihood)
+        logger.debug("With coverage: %.3f",
+                     relative_likelihood * coverage_prob)
 
-        return relative_likelihood
+        return relative_likelihood * coverage_prob
