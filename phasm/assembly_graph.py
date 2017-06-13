@@ -1,14 +1,20 @@
 import enum
 import logging
-from typing import Iterable
+from typing import Iterable, Union
 from collections import defaultdict, OrderedDict
 
 import networkx
 
 from phasm.alignments import (LocalAlignment, AlignmentType, MergedReads,
-                              OrientedDNASegment)
+                              OrientedDNASegment, OrientedRead)
+from phasm.bubbles import find_superbubbles, superbubble_nodes
+from phasm.typing import AlignmentsT, Node, Path
 
 logger = logging.getLogger(__name__)
+
+
+class AssemblyError(Exception):
+    pass
 
 
 class NodeState(enum.IntEnum):
@@ -39,7 +45,7 @@ class AssemblyGraph(networkx.DiGraph):
     def overlap_len(self):
         return self.graph.get('overlap_len', 'overlap_len')
 
-    def sort_adjacency_lists(self, reverse=False, weight='weight'):
+    def sort_adjacency_lists(self, reverse: bool=False, weight: str='weight'):
         for v in self:
             sorted_iter = sorted(self.adj[v].items(),
                                  key=lambda e: e[1][weight])
@@ -58,7 +64,8 @@ class AssemblyGraph(networkx.DiGraph):
 
         return self.sequence_src.get_sequence(read)
 
-    def sequence_for_path(self, path, edge_len='weight', include_last=True):
+    def sequence_for_path(self, path: Path, edge_len: str='weight',
+                          include_last: bool=True):
         """Get the actual DNA sequence for a path through the assembly graph.
         Requires `self.sequence_src` to be set."""
 
@@ -79,7 +86,8 @@ class AssemblyGraph(networkx.DiGraph):
 
         return b"".join(sequence_parts)
 
-    def node_path_edges(self, nodes, data=None):
+    def node_path_edges(self, nodes: Iterable[Node],
+                        data: Union[bool, str]=None):
         """A generator that yields the edges for a path between the given
         nodes. If an edge does not exists in the graph an exception is raised.
 
@@ -514,3 +522,113 @@ def merge_unambiguous_paths(g: AssemblyGraph):
         counter += 1
 
     return num_merged_nodes
+
+
+def _get_aligning_reads(alignments: AlignmentsT, read: OrientedRead):
+    yield read
+
+    if read in alignments:
+        for la in alignments[read]:
+            a_read, b_read = la.get_oriented_reads()
+            yield a_read
+            yield b_read
+
+
+def average_coverage_path(g: AssemblyGraph, alignments: AlignmentsT,
+                          path: Iterable[Node],
+                          include_last: bool=True) -> float:
+    """Calculate the average coverage along a given path through the assembly
+    graph.
+
+    Average coverage is calculated as follows:
+
+    1. Determine the length :math:`l` of the given path
+    2. Determine all reads aligning to the given path
+    3. Calculate the total sum :math:`s` of read lengths
+
+    Coverage: :math:`s / l`
+    """
+
+    path_length = 0
+    aligning_reads = set()  # type: Set[OrientedRead]
+
+    last = None
+    for u, v, l in g.node_path_edges(path, g.edge_len):
+        path_length += l
+
+        if isinstance(u, MergedReads):
+            for read in u.reads:
+                aligning_reads.update(_get_aligning_reads(alignments, read))
+        else:
+            aligning_reads.update(_get_aligning_reads(alignments, u))
+
+        last = v
+
+    if include_last and last:
+        path_length += len(last)
+
+        if isinstance(last, MergedReads):
+            for read in last.reads:
+                aligning_reads.update(_get_aligning_reads(alignments, read))
+        else:
+            aligning_reads.update(_get_aligning_reads(alignments, last))
+
+    read_length_sum = sum(len(r) for r in aligning_reads)
+
+    return read_length_sum / path_length
+
+
+def build_bubblechains(g: AssemblyGraph,
+                       min_nodes: int=1) -> Iterable[AssemblyGraph]:
+    # Build dictionary which maps the bubble source to the bubble sink
+    logger.info("Searching for non-nested superbubbles in the assembly "
+                "graph...")
+    bubbles = {b[0]: b[1] for b in find_superbubbles(g, report_nested=False)}
+    bubble_entrances = set(bubbles.keys())
+    logger.debug("Found superbubbles: %s", bubbles)
+    logger.info("Graph has %d superbubbles", len(bubbles))
+
+    # Obtain start nodes
+    # Priority is given as follows:
+    # 1. Bubble entrances without incoming edges
+    # 2. Bubble entrances for which the entrance and corresponding exit have
+    #    not been visited yet
+    start_points = [
+        n for n in bubble_entrances if g.in_degree(n) == 0]
+    # We'll check later if this bubble has been visited already
+    start_points.extend(bubble_entrances)
+
+    logger.info("Number of start points : %d", len(start_points))
+
+    visited = set()
+    for start in start_points:
+        subgraph_nodes = set()
+
+        logger.debug("New start point %s", start)
+
+        if start not in bubble_entrances:
+            raise AssemblyError("Unexpected start point: {}, this is not a "
+                                "bubble entrance.".format(start))
+
+        bubble_exit = bubbles[start]
+
+        if start in visited and bubble_exit in visited:
+            logger.debug("<%s, %s> already visited, skipping.",
+                         start, bubble_exit)
+            continue
+
+        num_bubbles = 0
+        while start in bubble_entrances:
+            bubble_exit = bubbles[start]
+            bubble_nodes = superbubble_nodes(g, start, bubble_exit)
+
+            subgraph_nodes.update(bubble_nodes)
+            visited.update(bubble_nodes)
+
+            start = bubble_exit
+            num_bubbles += 1
+
+        logger.info("Built bubblechain of %d bubbles", num_bubbles)
+
+        if len(subgraph_nodes) >= min_nodes:
+            yield networkx.subgraph(g, subgraph_nodes)
