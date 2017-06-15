@@ -525,12 +525,9 @@ def merge_unambiguous_paths(g: AssemblyGraph):
 
 
 def _get_aligning_reads(alignments: AlignmentsT, read: OrientedRead):
-    yield read
-
     if read in alignments:
         for la in alignments[read]:
             a_read, b_read = la.get_oriented_reads()
-            yield a_read
             yield b_read
 
 
