@@ -167,7 +167,7 @@ class OrientedRead(OrientedDNASegment):
 
 
 class MergedReads(OrientedDNASegment):
-    """Represents a collection of reads to be merged together. For example,
+    """Represents a collection of reads merged together. For example,
     this is being used in an :class:`AssemblyGraph` to merge unambiguous
     (non-branching) paths to a single node."""
 
