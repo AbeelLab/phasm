@@ -138,7 +138,7 @@ def gfa2_parse_segments_with_fragments(f: TextIO):
 
 
 def gfa_line(*args) -> str:
-    return "\t".join(args) + "\n"
+    return "\t".join(map(str, args)) + "\n"
 
 
 def gfa_header(version: str="2.0", trace_spacing: int=None) -> str:
@@ -203,7 +203,7 @@ def _write_graph_gfa2(f: TextIO, g: AssemblyGraph):
             cur_pos = 0
             for read, prefix_len in zip_longest(n.reads, n.prefix_lengths):
                 frag_start = 0
-                frag_end = prefix_len
+                frag_end = prefix_len if prefix_len else len(read)
 
                 segment_start = cur_pos
                 segment_end = (cur_pos + prefix_len) if prefix_len else len(n)
@@ -225,4 +225,4 @@ def _write_graph_gfa2(f: TextIO, g: AssemblyGraph):
         b_end = d[g.overlap_len]
 
         parts = ["E", sid1, sid2, a_start, a_end, b_start, b_end, "*"]
-        g.write(gfa_line(*parts))
+        f.write(gfa_line(*parts))
