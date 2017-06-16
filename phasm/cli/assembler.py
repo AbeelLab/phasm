@@ -16,15 +16,16 @@ from phasm.filter import (ContainedReads, MaxOverhang, MinReadLength,
                           MinOverlapLength)
 from phasm.phasing import BubbleChainPhaser
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger()
 
 
 def layout(args):
     logger.info("======== STAGE 1: Build Assembly Graph =========")
 
     logger.info("Pass [1/2] of GFA2 file to import reads (segments)...")
+    reads = {}
     with open(args.gfa_file) as f:
-        reads = gfa.gfa2_parse_segments(args.gfa_file)
+        reads = gfa.gfa2_parse_segments(f)
     logger.info("Read %d reads from GFA2 file.", len(reads))
 
     logger.info("Pass [2/2] of GFA2 file to import local alignments "
@@ -43,9 +44,9 @@ def layout(args):
             yield la
 
     with open(args.gfa_file) as gfa_file:
-        la_iter = alignment_recorder((l for l in gfa_file
-                                      if l.startswith('E')))
-        la_iter = map(gfa.gfa_line_to_la(reads), la_iter)
+        la_iter = map(gfa.gfa2_line_to_la(reads),
+                      (l for l in gfa_file if l.startswith('E')))
+        la_iter = alignment_recorder(la_iter)
 
         filters = [ContainedReads()]
 
@@ -55,9 +56,8 @@ def layout(args):
         if args.min_overlap_length:
             filters.append(MinOverlapLength(args.min_overlap_length))
 
-        if args.max_overhang:
-            filters.append(MaxOverhang(args.max_overhang_abs,
-                                       args.max_overhang_rel))
+        filters.append(MaxOverhang(args.max_overhang_abs,
+                                   args.max_overhang_rel))
 
         la_iter = filter(lambda x: all(f(x) for f in filters), la_iter)
 
@@ -139,7 +139,7 @@ def layout(args):
     elif args.format == 'gfa2':
         gfa.write_graph(args.output, g, 2)
     elif args.format == 'graphml':
-        networkx.write_graphml(g, f)
+        networkx.write_graphml(g, args.output, encoding='unicode')
     else:
         logger.critical("Invalid output format specified: %s", args.format)
 
@@ -148,6 +148,12 @@ def main():
     parser = argparse.ArgumentParser(
         description="PHASM: Haplotype-aware de novo genome assembly.")
     parser.set_defaults(func=None)
+
+    parser.add_argument(
+        '-v', '--verbose', action='count', default=0, required=False,
+        help="Increase verbosity level with each usage."
+    )
+
     subparsers = parser.add_subparsers()
 
     # -------------------------------------------------------------------------
@@ -183,7 +189,7 @@ def main():
         help="Max absolute overhang length (default: 1000)."
     )
     alignment_group.add_argument(
-        '-H', '--max-overhang-rel', type=float, default=0.8, required=False,
+        '-r', '--max-overhang-rel', type=float, default=0.8, required=False,
         metavar="FRACTION",
         help="Max overhang length as fraction of the overlap length (default: "
              "0.8)."
@@ -218,6 +224,25 @@ def main():
     # Argument parsing
     # ------------------------------------------------------------------------
     args = parser.parse_args()
+
+    # Setup logging
+    logger.setLevel(logging.INFO)
+    phasm_logger = logging.getLogger('phasm')
+    phasm_logger.setLevel(logging.WARNING)
+
+    formatter = logging.Formatter("{asctime} - {levelname}:{name}:{message}",
+                                  style="{")
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.DEBUG)
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
+    if args.verbose > 0:
+        phasm_logger.setLevel(logging.INFO)
+
+    if args.verbose > 1:
+        logger.setLevel(logging.DEBUG)
+        phasm_logger.setLevel(logging.DEBUG)
 
     if not args.func:
         parser.print_help()
