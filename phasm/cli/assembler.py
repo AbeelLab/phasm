@@ -56,7 +56,8 @@ def layout(args):
             filters.append(MinOverlapLength(args.min_overlap_length))
 
         if args.max_overhang:
-            filters.append(MaxOverhang(*args.max_overhang))
+            filters.append(MaxOverhang(args.max_overhang_abs,
+                                       args.max_overhang_rel))
 
         la_iter = filter(lambda x: all(f(x) for f in filters), la_iter)
 
@@ -166,28 +167,36 @@ def main():
 
     alignment_group.add_argument(
         '-l', '--min-read-length', type=int, required=False, default=0,
+        metavar="LENGTH",
         help="Filter reads smaller than the given length (default: disabled)"
     )
     alignment_group.add_argument(
         '-s', '--min-overlap-length', type=int, required=False, default=0,
+        metavar="LENGTH",
         help="Minimum length of the overlap between two reads, otherwise "
              "this alignment is ignored. Default is disabled, because it's "
              "something that's usually handled by your overlapper."
     )
     alignment_group.add_argument(
-        '-h', '--max-overhang', nargs=2,
-        type=(int, float), default=(1000, 0.8),
-        help="Max overhang. This option requires two parameters: the "
-             "absolute maximum overhang length, and the maximum length as "
-             "ratio of the overlap length (default: 1000, 0.8)."
+        '-a', '--max-overhang-abs', type=int, default=1000, required=False,
+        metavar="LENGTH",
+        help="Max absolute overhang length (default: 1000)."
+    )
+    alignment_group.add_argument(
+        '-H', '--max-overhang-rel', type=float, default=0.8, required=False,
+        metavar="FRACTION",
+        help="Max overhang length as fraction of the overlap length (default: "
+             "0.8)."
     )
     graph_cleaning_group.add_argument(
         '-t', '--max-tip-length', type=int, default=4, required=False,
-        help="Number of edges before a path is too long to be called a tip "
+        metavar="NUM",
+        help="Maximum number of edges of a path to be called a tip "
              "(default: 4)."
     )
     graph_cleaning_group.add_argument(
         '-F', '--length-fuzz', type=int, default=1000, required=False,
+        metavar="LENGTH",
         help="Transitive reduction length fuzz parameter (default: 1000). "
              "See Myers (2005). "
     )
@@ -198,8 +207,19 @@ def main():
     )
     layout_io_group.add_argument(
         '-o', '--output', type=argparse.FileType('w'), default=sys.stdout,
+        metavar="FILE",
         help="Output file (default stdout)"
     )
     layout_io_group.add_argument(
         'gfa_file', help="Input GFA2 file with all pairwise local alignments."
     )
+
+    # ------------------------------------------------------------------------
+    # Argument parsing
+    # ------------------------------------------------------------------------
+    args = parser.parse_args()
+
+    if not args.func:
+        parser.print_help()
+    else:
+        args.func(args)
