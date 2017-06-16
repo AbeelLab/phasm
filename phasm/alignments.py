@@ -190,7 +190,8 @@ class MergedReads(OrientedDNASegment):
     def reverse(self) -> 'MergedReads':
         new_strand = "+" if self.strand == "-" else "-"
         return MergedReads(self.id, self.length, new_strand,
-                           [r.reverse() for r in reversed(self.reads)])
+                           [r.reverse() for r in reversed(self.reads)],
+                           list(reversed(self.prefix_lengths)))
 
     def __hash__(self) -> int:
         return hash(str(self))
