@@ -128,8 +128,6 @@ def build_assembly_graph(la_iter: Iterable[LocalAlignment],
                          overlap_len: str='overlap_len') -> AssemblyGraph:
     g = AssemblyGraph(edge_len=edge_len, overlap_len=overlap_len)
 
-    logger.info('Start building assembly graph...')
-
     for la in la_iter:
         la_type = la.classify()
         a_node, b_node = la.get_oriented_reads()
@@ -167,10 +165,6 @@ def build_assembly_graph(la_iter: Iterable[LocalAlignment],
                          b_node, a_node, g[b_node][a_node][edge_len])
             logger.debug('Added edge (%s, %s) with weight %d',
                          a_rev, b_rev, g[a_rev][b_rev][edge_len])
-
-    logger.info("Built assembly graph with %d nodes and %d edges.",
-                networkx.number_of_nodes(g),
-                networkx.number_of_edges(g))
 
     return g
 
@@ -439,10 +433,9 @@ def clean_graph(g: AssemblyGraph):
 def merge_unambiguous_paths(g: AssemblyGraph):
     """Merge unambiguous (non-branching) paths to a single node.
 
-    This method does not take the reverse complements into account, because
-    paths on one strand may be unambiguous, but this does not have to be on the
-    reverse strand (because of other reads aligning there). It is therefore not
-    recommended to run `make_symmetric` after applying this operation."""
+    If the graph is symmetric, then it tries to give the same new node ID to
+    paths that belong together (in the sense of original and its reverse
+    complement)."""
 
     start_points = [
         n for n in g.nodes_iter() if
@@ -454,6 +447,7 @@ def merge_unambiguous_paths(g: AssemblyGraph):
 
     num_merged_nodes = 0
     counter = 0
+    merged_ids = {}
 
     for start in start_points:
         if g.out_degree(start) != 1:
@@ -479,8 +473,16 @@ def merge_unambiguous_paths(g: AssemblyGraph):
                             n.id, g.in_degree(n), g.out_degree(n)) for n in
                                nodes_to_merge))
 
+        # If the graph is symmetric, try to find an ID for its merged reverse
+        # complement
+        if nodes_to_merge[0] in merged_ids:
+            new_id = merged_ids[nodes_to_merge[0]]
+        else:
+            new_id = "merged{}".format(counter)
+            counter += 1
+            merged_ids[nodes_to_merge[-1].reverse()] = new_id
+
         # Create the new node and copy the required edges
-        new_id = "merged{}".format(counter)
         prefix_lengths = [l for u, v, l in
                           g.node_path_edges(nodes_to_merge, g.edge_len)]
         new_unmatched_prefix = sum(prefix_lengths)
@@ -519,7 +521,6 @@ def merge_unambiguous_paths(g: AssemblyGraph):
                      g.in_degree(new_node), g.out_degree(new_node))
 
         num_merged_nodes += len(nodes_to_merge)
-        counter += 1
 
     return num_merged_nodes
 
