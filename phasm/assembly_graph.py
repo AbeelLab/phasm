@@ -490,7 +490,6 @@ def merge_unambiguous_paths(g: AssemblyGraph):
         new_unmatched_prefix = sum(prefix_lengths)
         new_length = new_unmatched_prefix + len(nodes_to_merge[-1])
 
-        # Keep strand from first node
         new_node = MergedReads(new_id, new_length, orientation, nodes_to_merge,
                                prefix_lengths)
         g.add_node(new_node)
@@ -584,16 +583,21 @@ def build_bubblechains(g: AssemblyGraph,
                 "graph...")
     bubbles = {b[0]: b[1] for b in find_superbubbles(g, report_nested=False)}
     bubble_entrances = set(bubbles.keys())
+    bubble_exits = set(bubbles.values())
     logger.debug("Found superbubbles: %s", bubbles)
     logger.info("Graph has %d superbubbles", len(bubbles))
 
     # Obtain start nodes
     # Priority is given as follows:
     # 1. Bubble entrances without incoming edges
-    # 2. Bubble entrances for which the entrance and corresponding exit have
+    # 2. Bubble entrances for which holds that it's not also an exit of an
+    #    other bubble
+    # 3. Bubble entrances for which the entrance and corresponding exit have
     #    not been visited yet
     start_points = [
         n for n in bubble_entrances if g.in_degree(n) == 0]
+    start_points.extend((n for n in bubble_entrances if n not in bubble_exits))
+
     # We'll check later if this bubble has been visited already
     start_points.extend(bubble_entrances)
 
@@ -609,16 +613,15 @@ def build_bubblechains(g: AssemblyGraph,
             raise AssemblyError("Unexpected start point: {}, this is not a "
                                 "bubble entrance.".format(start))
 
-        bubble_exit = bubbles[start]
-
-        if start in visited and bubble_exit in visited:
-            logger.debug("<%s, %s> already visited, skipping.",
-                         start, bubble_exit)
-            continue
-
         num_bubbles = 0
         while start in bubble_entrances:
             bubble_exit = bubbles[start]
+
+            if start in visited and bubble_exit in visited:
+                logger.debug("<%s, %s> already visited, stopping.",
+                             start, bubble_exit)
+                break
+
             bubble_nodes = superbubble_nodes(g, start, bubble_exit)
 
             subgraph_nodes.update(bubble_nodes)
@@ -627,7 +630,8 @@ def build_bubblechains(g: AssemblyGraph,
             start = bubble_exit
             num_bubbles += 1
 
-        logger.info("Built bubblechain of %d bubbles", num_bubbles)
+        if num_bubbles > 0:
+            logger.info("Built bubblechain of %d bubbles", num_bubbles)
 
-        if len(subgraph_nodes) >= min_nodes:
-            yield networkx.subgraph(g, subgraph_nodes)
+            if len(subgraph_nodes) >= min_nodes:
+                yield networkx.subgraph(g, subgraph_nodes)
