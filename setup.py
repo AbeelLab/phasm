@@ -45,6 +45,7 @@ setup(
     # Entry points
     entry_points={
         'console_scripts': [
+            'phasm = phasm.cli.assembler:main',
             'phasm-convert = phasm.cli.convert:main'
         ]
     }
