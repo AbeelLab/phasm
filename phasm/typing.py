@@ -15,7 +15,7 @@ AlignmentsT = Mapping[OrientedRead, Set[LocalAlignment]]
 
 # Assembly Graphs
 AssemblyGraph = 'phasm.assembly_graph.AssemblyGraph'
-Node = OrientedDNASegment
+Node = Union[OrientedDNASegment, str]
 Edge = Tuple[Node, Node]
 Path = Iterable[Edge]
 Bubble = Tuple[Node, Node]
