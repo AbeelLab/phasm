@@ -5,16 +5,13 @@ Identify superbubbles in an assembly graph.
 import logging
 import random
 from enum import Enum
-from typing import Iterator, Tuple, Hashable, NamedTuple, Set
+from typing import Iterator, Tuple, NamedTuple, Set
 from collections import deque, OrderedDict
 
 import networkx
 
-from phasm.assembly_graph import AssemblyGraph
 from phasm.rmq import RangeMinimumQuery, RangeMaximumQuery
-
-Node = Hashable
-Bubble = Tuple[Node, Node]
+from phasm.typing import AssemblyGraph, Node, Bubble
 
 logger = logging.getLogger(__name__)
 
@@ -333,7 +330,16 @@ class SuperBubbleFinderDAG:
         if possible_start == valid:
             # At this point we have found a correct superbubble entrance-exit
             # pair
+            bubble = (possible_start, exit)
+
+            if 'r_' in bubble or 're_' in bubble:
+                logger.debug("Bubble <%s, %s> with artificial source or sink,"
+                             " ignoring.", *bubble)
+                return
+
             yield (possible_start, exit)
+            logger.debug("Found top level superbubble <%s, %s>",
+                         *bubble)
 
             # Check for nested superbubbles
             while self.candidates[-1].v != possible_start:
@@ -346,7 +352,8 @@ class SuperBubbleFinderDAG:
                     else:
                         # pass through nested bubbles, but don't report them
                         for bubble in nested_iter:
-                            pass
+                            logger.debug("Ignoring nested bubble <%s, %s>",
+                                         *bubble)
                 else:
                     self.candidates.pop()
 
@@ -402,11 +409,6 @@ def find_superbubbles(g: AssemblyGraph,
         logger.debug("Partition with %d nodes with in-degree 0, %d nodes with "
                      "out-degree 0, acyclic: %s", num_sources, num_sinks,
                      acyclic)
-
-        networkx.write_graphml(partition, "last_partition.graphml")
-
-        if g.has_node('read1735-'):
-            logger.setLevel(logging.DEBUG)
 
         if acyclic:
             superbubble_finder = SuperBubbleFinderDAG(partition, report_nested)
