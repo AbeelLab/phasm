@@ -2,10 +2,14 @@
 Utilities to output Graphical Assembly Format-files
 ===================================================
 
-Tools to convert a NetworkX assembly graph to a GFA file.
+Tools to convert a NetworkX assembly graph to a GFA file, or reconstructing
+a NetworkX graph from a GFA file.
+
+A lot of this module has been written under some time pressure, so it's a bit
+of a mess, sorry.
 """
 
-from typing import TextIO, Mapping, NamedTuple, List
+from typing import TextIO, Mapping, NamedTuple, List, Union
 from collections import defaultdict
 from itertools import zip_longest
 
@@ -16,6 +20,8 @@ MergedFragment = NamedTuple('MergedFragment', [
     ('id', str), ('length', int), ('reads', List[str]),
     ('prefix_lengths', List[int])
 ])
+
+SegmentMapping = Mapping[str, Union[Read, MergedFragment]]
 
 
 def gfa2_segment_to_read(line: str) -> Read:
@@ -56,20 +62,29 @@ def _gfa_pos_to_int(pos: str):
     return int(pos)
 
 
+def gfa2_parse_edge(line: str):
+    if not line.startswith('E'):
+        raise ValueError('Given GFA2 line is not an edge.')
+
+    parts = line.strip().split('\t')
+    sid1 = parts[2].strip()
+    sid2 = parts[3].strip()
+    arange = tuple(map(_gfa_pos_to_int, parts[4:6]))
+    brange = tuple(map(_gfa_pos_to_int, parts[6:8]))
+    alignment = parts[8].strip()
+    tags = []
+    if len(parts) > 9:
+        tags.extend(parts[9:])
+
+    return (sid1, sid2, arange, brange, alignment, tags)
+
+
 def gfa2_line_to_la(reads: Mapping[str, Read]):
     def mapper(line: str):
         if not line.startswith('E'):
             raise ValueError('Given GFA2 line is not an edge.')
 
-        parts = line.strip().split('\t')
-        sid1 = parts[2].strip()
-        sid2 = parts[3].strip()
-        arange = tuple(map(_gfa_pos_to_int, parts[4:6]))
-        brange = tuple(map(_gfa_pos_to_int, parts[6:8]))
-        alignment = parts[8].strip()
-        tags = []
-        if len(parts) > 9:
-            tags.extend(parts[9:])
+        sid1, sid2, arange, brange, alignment, tags = gfa2_parse_edge(line)
 
         a_read = reads[sid1[:-1]]
         b_read = reads[sid2[:-1]]
@@ -120,21 +135,69 @@ def gfa2_parse_segments_with_fragments(f: TextIO):
         else:
             read = gfa2_segment_to_read(line)
             length = len(read)
-            reads = []
+            fragment_reads = []
             prefix_lengths = []
 
             for fragment_info in sorted(fragments[segment],
                                         key=lambda elem: elem[2][0]):
                 _, external_id, segment_range, fragment_range = fragment_info
                 fragment_length = fragment_range[1] - fragment_range[0]
-                reads.append(external_id)
+                fragment_reads.append(external_id)
                 prefix_lengths.append(fragment_length)
 
             prefix_lengths.pop()
-            reads[segment] = MergedFragment(read.id, length, reads,
+            reads[segment] = MergedFragment(read.id, length, fragment_reads,
                                             prefix_lengths)
 
     return reads
+
+
+def gfa2_reconstruct_assembly_graph(gfa_file: TextIO,
+                                    segments: SegmentMapping,
+                                    with_orig_reads: Mapping[str, Read]=None,
+                                    edge_len: str='weight',
+                                    overlap_len: str='overlap_len'):
+    """Reconstruct an assembly graph from a GFA2 file. If `with_orig_reads` is
+    given, it reconstructs the full assemblygraph with original `OrientedRead`
+    and `MergedReads` objects as nodes. Otherwise the nodes will be just
+    strings."""
+
+    g = AssemblyGraph()
+
+    nodes_map = {}  # type: Mapping[str, Node]
+    if with_orig_reads:
+        # First create node objects, and store them in a dict
+        for segment, fragment in segments.items():
+            if isinstance(fragment, Read):
+                node1 = Read.with_orientation("+")
+                node2 = Read.with_orientation("-")
+
+            else:
+                reads = list(map(with_orig_reads.get, fragment.reads))
+                node1 = MergedReads(fragment.id, fragment.length, reads,
+                                    fragment.prefix_lengths)
+                node2 = node1.reverse()
+
+            g.add_nodes_from([node1, node2])
+            nodes_map[str(node1)] = node1
+            nodes_map[str(node2)] = node2
+
+    # Parse edges, if `with_orig_reads` is given, use the mapping created above
+    # to obtain the right nodes.
+    line_iter = (l for l in gfa_file if l.startswith('E'))
+    for line in line_iter:
+        sid1, sid2, arange, brange, alignment, tags = gfa2_parse_edge(line)
+        length = arange[0] - brange[0]
+        overlap = max(arange[1] - arange[0], brange[1] - brange[0])
+
+        n1 = nodes_map[sid1] if with_orig_reads else sid1
+        n2 = nodes_map[sid2] if with_orig_reads else sid2
+        g.add_edge(n1, n2, {
+            edge_len: length,
+            overlap_len: overlap
+        })
+
+    return g
 
 
 def gfa_line(*args) -> str:
@@ -150,14 +213,8 @@ def gfa_header(version: str="2.0", trace_spacing: int=None) -> str:
     return gfa_line(*parts)
 
 
-def write_graph(f: TextIO, g: AssemblyGraph, gfa_version: int=1):
-    if gfa_version == 1:
-        _write_graph_gfa1(f, g)
-    else:
-        _write_graph_gfa2(f, g)
-
-
-def _write_graph_gfa1(f: TextIO, g: AssemblyGraph):
+def gfa1_write_graph(f: TextIO, g: AssemblyGraph,
+                     with_orig_segments: SegmentMapping=None):
     f.write(gfa_header("1.0"))
 
     segments = set()
@@ -167,6 +224,9 @@ def _write_graph_gfa1(f: TextIO, g: AssemblyGraph):
             continue
 
         segments.add(segment_name)
+
+        if with_orig_segments and segment_name in with_orig_segments:
+            n = with_orig_segments[segment_name]
 
         parts = ["S", segment_name, "*", "LN:i:{}".format(n.length)]
         f.write(gfa_line(*parts))
@@ -184,12 +244,21 @@ def _write_graph_gfa1(f: TextIO, g: AssemblyGraph):
         f.write(gfa_line(*parts))
 
 
-def _write_graph_gfa2(f: TextIO, g: AssemblyGraph):
+def gfa2_write_graph(f: TextIO, g: AssemblyGraph,
+                     with_orig_segments: SegmentMapping=None):
     f.write(gfa_header("2.0"))
 
     segments = set()
     for n in g.nodes_iter():
-        segment_name = str(n)[:-1]
+        node_str = str(n)
+        segment_name = node_str[:-1]
+        segment_orientation = node_str[-1]
+
+        if with_orig_segments and segment_name in with_orig_segments:
+            n = with_orig_segments[segment_name]
+
+        if not isinstance(n, Read) and segment_orientation == "-":
+            continue
 
         if segment_name in segments:
             continue
@@ -224,5 +293,5 @@ def _write_graph_gfa2(f: TextIO, g: AssemblyGraph):
         b_start = 0
         b_end = d[g.overlap_len]
 
-        parts = ["E", sid1, sid2, a_start, a_end, b_start, b_end, "*"]
+        parts = ["E", "*", sid1, sid2, a_start, a_end, b_start, b_end, "*"]
         f.write(gfa_line(*parts))
