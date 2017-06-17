@@ -1,8 +1,9 @@
+import os
 import sys
 import logging
 import argparse
-from collections import defaultdict
 from typing import Iterable
+from collections import defaultdict
 
 import networkx
 
@@ -43,22 +44,21 @@ def layout(args):
 
             yield la
 
+    filters = [ContainedReads()]
+
+    if args.min_read_length:
+        filters.append(MinReadLength(args.min_read_length))
+
+    if args.min_overlap_length:
+        filters.append(MinOverlapLength(args.min_overlap_length))
+
+    filters.append(MaxOverhang(args.max_overhang_abs,
+                               args.max_overhang_rel))
+
     with open(args.gfa_file) as gfa_file:
         la_iter = map(gfa.gfa2_line_to_la(reads),
                       (l for l in gfa_file if l.startswith('E')))
         la_iter = alignment_recorder(la_iter)
-
-        filters = [ContainedReads()]
-
-        if args.min_read_length:
-            filters.append(MinReadLength(args.min_read_length))
-
-        if args.min_overlap_length:
-            filters.append(MinOverlapLength(args.min_overlap_length))
-
-        filters.append(MaxOverhang(args.max_overhang_abs,
-                                   args.max_overhang_rel))
-
         la_iter = filter(lambda x: all(f(x) for f in filters), la_iter)
 
         g = build_assembly_graph(la_iter)
@@ -135,13 +135,82 @@ def layout(args):
     logger.info("Writing graph...")
 
     if args.format == 'gfa1':
-        gfa.write_graph(args.output, g, 1)
+        gfa.gfa1_write_graph(args.output, g)
     elif args.format == 'gfa2':
-        gfa.write_graph(args.output, g, 2)
+        gfa.gfa2_write_graph(args.output, g)
     elif args.format == 'graphml':
         networkx.write_graphml(g, args.output, encoding='unicode')
     else:
         logger.critical("Invalid output format specified: %s", args.format)
+        sys.exit(1)
+
+
+def chain(args):
+    logger.info("Readig reads and fragments part of the assembly graph...")
+    graph_reads = {}
+    with open(args.graph_gfa) as f:
+        graph_reads = gfa.gfa2_parse_segments_with_fragments(f)
+
+    logger.info("Reconstructing assembly graph...")
+
+    with open(args.graph_gfa) as f:
+        g = gfa.gfa2_reconstruct_assembly_graph(f, graph_reads)
+
+    logger.info("Done.")
+    logger.info("Enumerate weakly connected components in the graph...")
+    num_components = 0
+    num_bubblechains = 0
+
+    if args.format.startswith("gfa"):
+        ext = "gfa"
+    elif args.format == "graphml":
+        ext = "graphml"
+    else:
+        logger.critical("Invalid output format specifified: %s", args.format)
+        sys.exit(1)
+
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    for i, component in enumerate(
+            networkx.weakly_connected_component_subgraphs(g, copy=False)):
+        logger.info("Connected component %d with %d nodes and %d edges.",
+                    i, networkx.number_of_nodes(component),
+                    networkx.number_of_edges(component))
+
+        for j, bubblechain in enumerate(build_bubblechains(component)):
+            logger.info("Found bubblechain #%d with %d nodes and %d edges",
+                        j, networkx.number_of_nodes(bubblechain),
+                        networkx.number_of_edges(bubblechain))
+
+            for n in bubblechain.nodes_iter():
+                component.node[n]['bubblechain'] = j
+
+            filename = "component{}.bubblechain{}.{}".format(i, j, ext)
+            path = os.path.join(args.output_dir, filename)
+            with open(path, "w") as f:
+                if args.format == 'gfa1':
+                    gfa.gfa1_write_graph(f, bubblechain, graph_reads)
+                elif args.format == 'gfa2':
+                    gfa.gfa2_write_graph(f, bubblechain, graph_reads)
+                else:
+                    networkx.write_graphml(bubblechain, f, encoding='unicode')
+
+            num_bubblechains += 1
+
+        filename = "component{}.{}".format(i, ext)
+        path = os.path.join(args.output_dir, filename)
+        with open(path, "w") as f:
+            if args.format == 'gfa1':
+                gfa.gfa1_write_graph(f, component, graph_reads)
+            elif args.format == 'gfa2':
+                gfa.gfa2_write_graph(f, component, graph_reads)
+            else:
+                networkx.write_graphml(component, f, encoding='unicode')
+
+        num_components += 1
+
+    logger.info("Built %d bubblechains from %d weakly connected components.",
+                num_bubblechains, num_components)
 
 
 def main():
@@ -218,6 +287,29 @@ def main():
     )
     layout_io_group.add_argument(
         'gfa_file', help="Input GFA2 file with all pairwise local alignments."
+    )
+
+    # ------------------------------------------------------------------------
+    # Chain command
+    # ------------------------------------------------------------------------
+    chain_parser = subparsers.add_parser(
+        'chain', help="Identify and build bubblechains")
+    chain_parser.set_defaults(func=chain)
+
+    chain_parser.add_argument(
+        '-f', '--format', default="gfa2",
+        help="Output format (default: GFA2)."
+    )
+    chain_parser.add_argument(
+        '-o', '--output-dir',
+        help="Output directory. If the directory does not exist, it will "
+             "be created."
+    )
+    chain_parser.add_argument(
+        'graph_gfa',
+        help="The assembly graph in GFA2 format. Other graph formats are not "
+             "supported. Note that this is a different file than the GFA2 file"
+             " with pairwise local alignments."
     )
 
     # ------------------------------------------------------------------------
