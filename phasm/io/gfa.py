@@ -16,10 +16,16 @@ from itertools import zip_longest
 from phasm.alignments import Read, LocalAlignment, Strand, MergedReads
 from phasm.assembly_graph import AssemblyGraph
 
-MergedFragment = NamedTuple('MergedFragment', [
+_MergedFragment = NamedTuple('MergedFragment', [
     ('id', str), ('length', int), ('reads', List[str]),
     ('prefix_lengths', List[int])
 ])
+
+
+class MergedFragment(_MergedFragment):
+    def __len__(self):
+        return self.length
+
 
 SegmentMapping = Mapping[str, Union[Read, MergedFragment]]
 
@@ -164,23 +170,28 @@ def gfa2_reconstruct_assembly_graph(gfa_file: TextIO,
 
     g = AssemblyGraph()
 
+    def get_orig_oriented_read(oriented_sid: str):
+        segment = oriented_sid[:-1]
+        return with_orig_reads[segment].with_orientation(oriented_sid[-1])
+
     nodes_map = {}  # type: Mapping[str, Node]
-    if with_orig_reads:
-        # First create node objects, and store them in a dict
-        for segment, fragment in segments.items():
-            if isinstance(fragment, Read):
-                node1 = Read.with_orientation("+")
-                node2 = Read.with_orientation("-")
-
+    # First create node objects, and store them in a dict
+    for segment, fragment in segments.items():
+        if isinstance(fragment, Read):
+            node1 = fragment.with_orientation("+")
+            node2 = fragment.with_orientation("-")
+        else:
+            if with_orig_reads:
+                reads = list(map(get_orig_oriented_read, fragment.reads))
             else:
-                reads = list(map(with_orig_reads.get, fragment.reads))
-                node1 = MergedReads(fragment.id, fragment.length, reads,
-                                    fragment.prefix_lengths)
-                node2 = node1.reverse()
+                reads = fragment.reads
 
-            g.add_nodes_from([node1, node2])
-            nodes_map[str(node1)] = node1
-            nodes_map[str(node2)] = node2
+            node1 = MergedReads(fragment.id, fragment.length, "+", reads,
+                                fragment.prefix_lengths)
+            node2 = node1.reverse()
+
+        nodes_map[str(node1)] = node1
+        nodes_map[str(node2)] = node2
 
     # Parse edges, if `with_orig_reads` is given, use the mapping created above
     # to obtain the right nodes.
@@ -190,8 +201,8 @@ def gfa2_reconstruct_assembly_graph(gfa_file: TextIO,
         length = arange[0] - brange[0]
         overlap = max(arange[1] - arange[0], brange[1] - brange[0])
 
-        n1 = nodes_map[sid1] if with_orig_reads else sid1
-        n2 = nodes_map[sid2] if with_orig_reads else sid2
+        n1 = nodes_map[sid1]
+        n2 = nodes_map[sid2]
         g.add_edge(n1, n2, {
             edge_len: length,
             overlap_len: overlap
@@ -244,21 +255,13 @@ def gfa1_write_graph(f: TextIO, g: AssemblyGraph,
         f.write(gfa_line(*parts))
 
 
-def gfa2_write_graph(f: TextIO, g: AssemblyGraph,
-                     with_orig_segments: SegmentMapping=None):
+def gfa2_write_graph(f: TextIO, g: AssemblyGraph):
     f.write(gfa_header("2.0"))
 
     segments = set()
     for n in g.nodes_iter():
         node_str = str(n)
         segment_name = node_str[:-1]
-        segment_orientation = node_str[-1]
-
-        if with_orig_segments and segment_name in with_orig_segments:
-            n = with_orig_segments[segment_name]
-
-        if not isinstance(n, Read) and segment_orientation == "-":
-            continue
 
         if segment_name in segments:
             continue
@@ -270,9 +273,12 @@ def gfa2_write_graph(f: TextIO, g: AssemblyGraph,
         if isinstance(n, MergedReads):
             # Also output fragment lines to denote which reads are merged
             cur_pos = 0
+            total_prefix_lengths = sum(l for l in n.prefix_lengths)
+
             for read, prefix_len in zip_longest(n.reads, n.prefix_lengths):
                 frag_start = 0
-                frag_end = prefix_len if prefix_len else len(read)
+                frag_end = (prefix_len if prefix_len else
+                            (len(n)-total_prefix_lengths))
 
                 segment_start = cur_pos
                 segment_end = (cur_pos + prefix_len) if prefix_len else len(n)
