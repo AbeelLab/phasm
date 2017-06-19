@@ -1,13 +1,16 @@
 import os
 import sys
+import random
 import logging
 import argparse
 from typing import Iterable
 from collections import defaultdict
 
+import dinopy
 import networkx
 
 from phasm.io import gfa
+from phasm.io.sequences import FastaSource
 from phasm.typing import LocalAlignment
 from phasm.assembly_graph import (build_assembly_graph, clean_graph,
                                   remove_transitive_edges, remove_tips,
@@ -189,9 +192,9 @@ def chain(args):
             path = os.path.join(args.output_dir, filename)
             with open(path, "w") as f:
                 if args.format == 'gfa1':
-                    gfa.gfa1_write_graph(f, bubblechain, graph_reads)
+                    gfa.gfa1_write_graph(f, bubblechain)
                 elif args.format == 'gfa2':
-                    gfa.gfa2_write_graph(f, bubblechain, graph_reads)
+                    gfa.gfa2_write_graph(f, bubblechain)
                 else:
                     networkx.write_graphml(bubblechain, f, encoding='unicode')
 
@@ -201,9 +204,9 @@ def chain(args):
         path = os.path.join(args.output_dir, filename)
         with open(path, "w") as f:
             if args.format == 'gfa1':
-                gfa.gfa1_write_graph(f, component, graph_reads)
+                gfa.gfa1_write_graph(f, component)
             elif args.format == 'gfa2':
-                gfa.gfa2_write_graph(f, component, graph_reads)
+                gfa.gfa2_write_graph(f, component)
             else:
                 networkx.write_graphml(component, f, encoding='unicode')
 
@@ -213,6 +216,77 @@ def chain(args):
                 num_bubblechains, num_components)
 
 
+def phase(args):
+    # Original reads are used for assembly graph reconstruction below
+    logger.info("Pass [1/2] of GFA2 file to import all original reads "
+                "(segments)...")
+    with open(args.alignments_gfa) as f:
+        reads = gfa.gfa2_parse_segments(f)
+    logger.info("Read %d reads from GFA2 file.", len(reads))
+
+    # Original pairwise local alignments are used for likelihood calculation
+    logger.info("Pass [2/2] of GFA2 file to import all pairwise local "
+                "alignments...")
+    read_alignments = defaultdict(set)
+    with open(args.alignments_gfa) as f:
+        la_iter = map(gfa.gfa2_line_to_la(reads),
+                      (l for l in f if l.startswith('E')))
+
+        for la in la_iter:
+            a_read, b_read = la.get_oriented_reads()
+            read_alignments[a_read].add(la)
+
+    logger.info("Done.")
+
+    # Setup sequence source
+    sequence_src = FastaSource(args.reads_fasta)
+
+    with dinopy.FastaWriter(args.output, force_overwrite=True) as fw:
+        for bubblechain_gfa in args.bubblechain_gfa:
+            logger.info("Bubblechain %s", bubblechain_gfa)
+            logger.info("Readig reads and fragments part of assembly graph...")
+            with open(bubblechain_gfa) as f:
+                graph_reads = gfa.gfa2_parse_segments_with_fragments(f)
+                print(graph_reads)
+
+            logger.info("Reconstructing assembly graph...")
+            with open(bubblechain_gfa) as f:
+                g = gfa.gfa2_reconstruct_assembly_graph(f, graph_reads, reads)
+
+            g.sequence_src = sequence_src
+
+            logger.info("Done.")
+
+            logger.info("Start phasing process, ploidy %d...", args.ploidy)
+            phaser = BubbleChainPhaser(g, read_alignments, args.ploidy, None,
+                                       args.threshold, args.prune_factor)
+            candidate_haplotypes = phaser.phase()
+
+            if len(candidate_haplotypes) == 0:
+                logger.warning("No possible haplotypes returned. Threshold to "
+                               "high?")
+                continue
+
+            logger.info("Got %d equally likely haplotype set candidates, "
+                        "picking a random one.", len(candidate_haplotypes))
+
+            haplotype_set = random.choice(candidate_haplotypes)
+
+            # Output the DNA sequence for each haplotype
+            logger.info("Build DNA sequences for each haplotype...")
+            id_base = bubblechain_gfa[:bubblechain_gfa.rfind('.')]
+            for i, haplotype in haplotype_set:
+                seq = g.sequence_for_path(
+                    g.node_path_edges(haplotype, data=True),
+                    include_last=True
+                )
+
+                name = "{}.haplotig{}".format(id_base, i).encode('ascii')
+                fw.write_entry((seq, name))
+
+            logger.info("Done with %s", bubblechain_gfa)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="PHASM: Haplotype-aware de novo genome assembly.")
@@ -220,7 +294,7 @@ def main():
 
     parser.add_argument(
         '-v', '--verbose', action='count', default=0, required=False,
-        help="Increase verbosity level with each usage."
+        help="Increase verbosity level, number of levels: 0, 1, 2"
     )
 
     subparsers = parser.add_subparsers()
@@ -297,7 +371,7 @@ def main():
     chain_parser.set_defaults(func=chain)
 
     chain_parser.add_argument(
-        '-f', '--format', default="gfa2",
+        '-f', '--format', default="gfa2", choices=("gfa1", "gfa2", "graphml"),
         help="Output format (default: GFA2)."
     )
     chain_parser.add_argument(
@@ -310,6 +384,53 @@ def main():
         help="The assembly graph in GFA2 format. Other graph formats are not "
              "supported. Note that this is a different file than the GFA2 file"
              " with pairwise local alignments."
+    )
+
+    # ------------------------------------------------------------------------
+    # Phase command
+    # ------------------------------------------------------------------------
+    phase_parser = subparsers.add_parser(
+        'phase',
+        help="Phase a bubblechain and output DNA sequences for each haplotype"
+             " in FASTA format."
+    )
+    phase_parser.set_defaults(func=phase)
+
+    phase_parser.add_argument(
+        '-p', '--ploidy', type=int, required=True,
+        help="The ploidy level."
+    )
+    phase_parser.add_argument(
+        '-t', '--threshold', type=float, default=0.1, required=False,
+        help="The minimum relative likelihood of a candidate haplotype set "
+             "to be considered for any following bubbles (default: 0.1)."
+    )
+    phase_parser.add_argument(
+        '-d', '--prune-factor', type=float, default=0.5, required=False,
+        help="Any candidate haplotype set with a relative likelihood lower "
+             "than the given prune factor times the top scoring candidate "
+             "will be pruned (default: 0.5)."
+    )
+    phase_parser.add_argument(
+        '-o', '--output', type=argparse.FileType('wb'), default=sys.stdout,
+        help="Output file (default: stdout)."
+    )
+    phase_parser.add_argument(
+        'reads_fasta',
+        help="The FASTA file with all your reads. A FASTA index file should "
+             "be present."
+    )
+    phase_parser.add_argument(
+        'alignments_gfa',
+        help="The GFA2 file with all pairwise local alignments (used to create"
+             " the initial assembly graph). This is a different file than your"
+             " bubblechain GFA2 file."
+    )
+    phase_parser.add_argument(
+        'bubblechain_gfa', nargs='+',
+        help="The bubblechain graph GFA2 file(s). If given multiple files, "
+             "these files will be processed sequentially, but the DNA "
+             "sequences will be written to the same file."
     )
 
     # ------------------------------------------------------------------------
