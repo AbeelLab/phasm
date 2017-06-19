@@ -447,7 +447,6 @@ def merge_unambiguous_paths(g: AssemblyGraph):
 
     num_merged_nodes = 0
     counter = 0
-    merged_ids = {}
 
     for start in start_points:
         if g.out_degree(start) != 1:
@@ -475,14 +474,8 @@ def merge_unambiguous_paths(g: AssemblyGraph):
 
         # If the graph is symmetric, try to find an ID for its merged reverse
         # complement
-        if nodes_to_merge[0] in merged_ids:
-            new_id = merged_ids[nodes_to_merge[0]]
-            orientation = "-"
-        else:
-            new_id = "merged{}".format(counter)
-            orientation = "+"
-            merged_ids[nodes_to_merge[-1].reverse()] = new_id
-            counter += 1
+        new_id = "merged{}".format(counter)
+        counter += 1
 
         # Create the new node and copy the required edges
         prefix_lengths = [l for u, v, l in
@@ -490,7 +483,7 @@ def merge_unambiguous_paths(g: AssemblyGraph):
         new_unmatched_prefix = sum(prefix_lengths)
         new_length = new_unmatched_prefix + len(nodes_to_merge[-1])
 
-        new_node = MergedReads(new_id, new_length, orientation, nodes_to_merge,
+        new_node = MergedReads(new_id, new_length, "+", nodes_to_merge,
                                prefix_lengths)
         g.add_node(new_node)
         g.node[new_node]['merged_reads'] = ", ".join(
