@@ -4,6 +4,8 @@ from typing import List, Tuple, Union
 
 import numpy
 
+from phasm.typing import Node
+
 Tracepoints = List[int]
 CIGAR = str
 Alignment = Union[Tracepoints, CIGAR]
@@ -187,11 +189,17 @@ class MergedReads(OrientedDNASegment):
     def orientation(self) -> str:
         return self.strand
 
+    def _reverse_id(self, read: Node) -> Node:
+        if isinstance(read, OrientedRead):
+            return read.reverse()
+        else:
+            return "{}{}".format(read[:-1], "+" if read[-1] == "-" else "-")
+
     def reverse(self) -> 'MergedReads':
         new_strand = "+" if self.strand == "-" else "-"
 
         return MergedReads(self.id, self.length, new_strand,
-                           [r.reverse() for r in reversed(self.reads)],
+                           [self._reverse_id(r) for r in reversed(self.reads)],
                            list(self.prefix_lengths))
 
     def __hash__(self) -> int:
