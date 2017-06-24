@@ -209,8 +209,7 @@ class MergedReads(OrientedDNASegment):
         if not isinstance(other, self.__class__):
             return False
 
-        return (self.id == other.id and self.strand == other.strand and
-                self.length == other.length)
+        return self.id == other.id and self.strand == other.strand
 
     def __len__(self) -> int:
         return self.length
