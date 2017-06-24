@@ -22,3 +22,4 @@ Bubble = Tuple[Node, Node]
 
 # Phasing algorithm parameters
 PruneParam = Union[float, Callable[[float], float]]
+RelevantLA = Mapping[OrientedRead, Set[LocalAlignment]]
