@@ -247,7 +247,6 @@ def phase(args):
             logger.info("Readig reads and fragments part of assembly graph...")
             with open(bubblechain_gfa) as f:
                 graph_reads = gfa.gfa2_parse_segments_with_fragments(f)
-                print(graph_reads)
 
             logger.info("Reconstructing assembly graph...")
             with open(bubblechain_gfa) as f:
@@ -259,7 +258,8 @@ def phase(args):
 
             logger.info("Start phasing process, ploidy %d...", args.ploidy)
             phaser = BubbleChainPhaser(g, read_alignments, args.ploidy, None,
-                                       args.threshold, args.prune_factor)
+                                       args.min_spanning_reads, args.threshold,
+                                       args.prune_factor)
             candidate_haplotypes = phaser.phase()
 
             if len(candidate_haplotypes) == 0:
@@ -275,7 +275,7 @@ def phase(args):
             # Output the DNA sequence for each haplotype
             logger.info("Build DNA sequences for each haplotype...")
             id_base = bubblechain_gfa[:bubblechain_gfa.rfind('.')]
-            for i, haplotype in haplotype_set:
+            for i, haplotype in enumerate(haplotype_set.haplotypes):
                 seq = g.sequence_for_path(
                     g.node_path_edges(haplotype, data=True),
                     include_last=True
@@ -410,6 +410,11 @@ def main():
         help="Any candidate haplotype set with a relative likelihood lower "
              "than the given prune factor times the top scoring candidate "
              "will be pruned (default: 0.5)."
+    )
+    phase_parser.add_argument(
+        '-s', '--min-spanning-reads', type=int, default=3, required=False,
+        help="If there re less spanning reads between two bubbles than the "
+             "given number then PHASM will start a new haploblock."
     )
     phase_parser.add_argument(
         '-o', '--output', type=argparse.FileType('wb'), default=sys.stdout,
