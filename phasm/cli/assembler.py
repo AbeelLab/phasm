@@ -1,6 +1,5 @@
 import os
 import sys
-import random
 import logging
 import argparse
 from typing import Iterable
@@ -260,29 +259,21 @@ def phase(args):
             phaser = BubbleChainPhaser(g, read_alignments, args.ploidy, None,
                                        args.min_spanning_reads, args.threshold,
                                        args.prune_factor)
-            candidate_haplotypes = phaser.phase()
 
-            if len(candidate_haplotypes) == 0:
-                logger.warning("No possible haplotypes returned. Threshold to "
-                               "high?")
-                continue
+            for i, (haploblock, include_last) in enumerate(phaser.phase()):
+                # Output the DNA sequence for each haplotype
+                logger.info("Haploblock %d, building DNA sequences for each "
+                            "haplotype...", i)
+                id_base = bubblechain_gfa[:bubblechain_gfa.rfind('.')]
+                for j, haplotype in enumerate(haploblock.haplotypes):
+                    seq = g.sequence_for_path(
+                        g.node_path_edges(haplotype, data=True),
+                        include_last=include_last
+                    )
 
-            logger.info("Got %d equally likely haplotype set candidates, "
-                        "picking a random one.", len(candidate_haplotypes))
-
-            haplotype_set = random.choice(candidate_haplotypes)
-
-            # Output the DNA sequence for each haplotype
-            logger.info("Build DNA sequences for each haplotype...")
-            id_base = bubblechain_gfa[:bubblechain_gfa.rfind('.')]
-            for i, haplotype in enumerate(haplotype_set.haplotypes):
-                seq = g.sequence_for_path(
-                    g.node_path_edges(haplotype, data=True),
-                    include_last=True
-                )
-
-                name = "{}.haplotig{}".format(id_base, i).encode('ascii')
-                fw.write_entry((seq, name))
+                    name = "{}.haploblock{}.{}".format(
+                        id_base, i, j).encode('ascii')
+                    fw.write_entry((seq, name))
 
             logger.info("Done with %s", bubblechain_gfa)
 

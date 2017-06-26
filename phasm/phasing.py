@@ -68,19 +68,14 @@ class HaplotypeSet:
         # relative likelihood calculation
         self.read_sets = []  # type: List[Set[OrientedRead]]
 
-        # Keep the boundaries of each haploblock
-        self.block_bounds = []
-
         if isinstance(copy_from, HaplotypeSet):
             for i in range(ploidy):
                 self.haplotypes.append(deque(copy_from.haplotypes[i]))
                 self.read_sets.append(set(copy_from.read_sets[i]))
-                self.block_bounds.append(list(copy_from.block_bounds[i]))
         else:
             for i in range(ploidy):
                 self.haplotypes.append(deque())
                 self.read_sets.append(set())
-                self.block_bounds.append(list())
 
         self.log_rl = float('-inf')
 
@@ -109,10 +104,6 @@ class HaplotypeSet:
 
         return new_set
 
-    def new_block(self):
-        for i in range(self.ploidy):
-            self.block_bounds.append(len(self.haplotypes[i]))
-
 
 class BubbleChainPhaser:
     def __init__(self, g: AssemblyGraph,
@@ -127,8 +118,7 @@ class BubbleChainPhaser:
         self.ploidy = ploidy
         self.coverage_model = coverage_model
 
-        self.num_bubbles = 0
-        self.prev_bubble = None
+        self.start_of_block = True
 
         # Keep a record of all reads seen
         self.prev_aligning_reads = set()  # type: Set[OrientedRead]
@@ -140,14 +130,13 @@ class BubbleChainPhaser:
         self.threshold = threshold
         self.prune_factor = prune_factor
 
-        # We start with a single empty haplotype set
-        self.possible_haplotypes = [HaplotypeSet(ploidy)]
+        self.candidate_sets = [HaplotypeSet(self.ploidy)]
 
-    def phase(self):
+    def phase(self) -> Iterable[Tuple[HaplotypeSet, bool]]:
         # find_superbubbles finds superbubbles in reverse topological order
         bubbles = OrderedDict(b for b in
                               find_superbubbles(self.g, report_nested=False))
-        bubble_sources = set(bubbles.keys())
+        bubble_entrances = set(bubbles.keys())
         self.num_bubbles = len(bubbles)
 
         start_points = [n for n in self.g.nodes_iter()
@@ -163,97 +152,142 @@ class BubbleChainPhaser:
             raise PhasingError("Found multiple 'sink' nodes, this should not "
                                "be the case.")
 
-        # Calculate approximate haplotype lengths, by averaging the length of
-        # a few random paths from start to end
         logger.debug("Superbubbles: %s", bubbles)
-
         logger.info("Start phasing haplograph with %d bubbles",
                     self.num_bubbles)
 
-        curr_node = start_points[0]
+        entrance = start_points[0]
+
+        if entrance not in bubble_entrances:
+            raise PhasingError("Unexpected starting point '{}', this is not "
+                               "a bubble entrance".format(entrance))
+
         bubble_num = 0
-        while curr_node:
-            if curr_node in bubble_sources:
-                # Update possible haplotype sets
-                logger.info("----")
-                logger.info("Branch and prune for bubble %d/%d",
-                            bubble_num+1, self.num_bubbles)
-                new_block = self.branch(curr_node, bubbles[curr_node],
-                                        bubble_num)
-                if not new_block:
-                    self.prune(self.prune_factor, bubble_num)
+        num_bubbles = len(bubbles)
+        while entrance in bubble_entrances:
+            exit = bubbles[entrance]
 
-                # Move to the bubble exit
-                self.prev_bubble = (curr_node, bubbles[curr_node])
-                curr_node = bubbles[curr_node]
-                bubble_num += 1
+            logger.info("-----")
+            logger.info("Current bubble <%s, %s> (%d/%d)", entrance, exit,
+                        bubble_num+1, num_bubbles)
+
+            # Determine reads that span between paths in previous bubbles and
+            # the current bubble.
+
+            # The difference between `cur_bubble_graph_reads` and
+            # `cur_bubble_aligning_reads` is that the former one only contains
+            # reads that play a role in the assembly graph, and the latter one
+            # also contains reads that don't necessarily play a role in the
+            # assembly graph, but do align to the current bubble.
+            #
+            # Additionaly, both variables only include reads that are related
+            # to the *interior* of the current bubble, so an alignment to the
+            # entrance or exit is ignored. Alignments to the entrance or exit
+            # do not provide any information on connecting paths between two
+            # different bubbles.
+            interior_nodes = (superbubble_nodes(
+                self.g, entrance, exit) - {entrance, exit})
+            cur_bubble_graph_reads = set(self.get_all_reads(interior_nodes))
+            cur_bubble_aligning_reads = self.get_aligning_reads(interior_nodes)
+            logger.debug("Current bubble has %d reads used for its interior "
+                         "and %d reads aligning to this bubble.",
+                         len(cur_bubble_graph_reads),
+                         len(cur_bubble_aligning_reads))
+            spanning_reads = (self.prev_aligning_reads &
+                              cur_bubble_aligning_reads)
+
+            if (len(spanning_reads) < self.min_spanning_reads and not
+                    self.start_of_block):
+                # Not enough reads to link the current bubble to the previous
+                # bubbles, yield current haplotype block and start a new one.
+                logger.info("Starting new haplotype block because we have too "
+                            "few spanning reads (%d < %d)",
+                            len(spanning_reads),
+                            self.min_spanning_reads)
+                yield self.new_block(), False
+
+            # Based on the relevant reads, collect all relevant local
+            # alignments. We ignore local alignments downstream of the
+            # current bubble.
+            relevant_reads = (spanning_reads if not self.start_of_block else
+                              cur_bubble_aligning_reads)
+            relevant_la = self.get_relevant_alignments(
+                relevant_reads, cur_bubble_graph_reads)
+
+            total_relevant_la = 0
+            for alignments in relevant_la.values():
+                total_relevant_la += len(alignments)
+
+            logger.info("%d relevant reads inducing %d relevant local "
+                        "alignments", len(relevant_reads),
+                        total_relevant_la)
+
+            new_haplotype_sets = self.branch(entrance, exit, relevant_la,
+                                             not self.start_of_block)
+
+            if new_haplotype_sets:
+                if not self.start_of_block:
+                    new_haplotype_sets = self.prune(new_haplotype_sets,
+                                                    self.prune_factor)
+                self.candidate_sets = new_haplotype_sets
             else:
-                # This should be a node with a single successor
-                if self.g.out_degree(curr_node) > 1:
-                    raise PhasingError("Encountered a node which is not a "
-                                       "bubble source and has out-degree > 1")
-                elif self.g.out_degree(curr_node) == 1:
-                    logger.waring("Encountered a node that is not part of a"
-                                  "bubble.")
-                    # TODO: extend haplotype sets with single node
-                    curr_node = self.g.neighbors(curr_node)[0]
-                else:
-                    # Last node, no neighbours, quit
-                    curr_node = None
+                # None of the branched haplotype sets are above threshold,
+                # yield current haploblock and start a new block at the current
+                # bubble.
+                logger.info("None of the branched candidates at this bubble "
+                            "has a relative likelihood above the given "
+                            "threshold. Starting a new block. If this happens "
+                            "too often consider lowering your threshold.")
+                yield self.new_block(), False
 
-        # Only keep the most probable haplotype set
-        self.prune(1.0, self.num_bubbles-1)
+                # Try again as start of a new block (with empty relevant_la).
+                # This list is guaranteed to be filled because candidates
+                # generated by the first bubble in a block are not yet
+                # filtered.
+                self.candidate_sets = self.branch(entrance, exit, relevant_la,
+                                                  check_threshold=False)
+
+            # Move to next bubble
+            entrance = exit
+            self.prev_graph_reads.update(cur_bubble_graph_reads)
+            self.prev_aligning_reads.update(cur_bubble_aligning_reads)
+            bubble_num += 1
+            self.start_of_block = False
+
+        # Only keep the most probable haplotype set(s)
+        self.candidate_sets = self.prune(self.candidate_sets, 1.0)
+        logger.info("Got %d equally likely candidate sets, picking a random "
+                    "one.", len(self.candidate_sets))
+        yield random.choice(self.candidate_sets), True
         logger.info("Done")
-        return self.possible_haplotypes
 
-    def branch(self, entrance: Node, exit: Node, bubble_num: int):
-        """Generate all new possible haplotype extensions for a
-        bubble (`entrance`, `exit`)."""
+    def new_block(self):
+        # Only keep the most probable candidate
+        best_candidates = self.prune(self.candidate_sets, 1.0)
+        logger.info("Got %d equally likely candidate sets, picking a random "
+                    "one.", len(best_candidates))
+        random_best = random.choice(best_candidates)
 
-        if len(self.possible_haplotypes) == 0:
-            logger.warning("No possible haplotypes available.")
+        # Reset state
+        self.candidate_sets = [HaplotypeSet(self.ploidy)]
+        self.prev_graph_reads = set()
+        self.prev_aligning_reads = set()
+        self.start_of_block = True
 
-        # Determine reads that span between paths in previous bubbles and the
-        # current bubble.
+        return random_best
 
-        # The difference between `cur_bubble_graph_reads` and
-        # `cur_bubble_aligning_reads` is that the former one only contains
-        # reads that play a role in the assembly graph, and the latter one also
-        # contains reads that don't necessarily play a role in the assembly
-        # graph, but do align to the current bubble.
-        #
-        # Additionaly, both variables only include reads that are related
-        # to the *interior* of the current bubble, so an alignment to the
-        # entrance or exit is ignored. Alignments to the entrance or exit do
-        # not provide any information on connecting paths between two
-        # different bubbles.
-        interior_nodes = (superbubble_nodes(
-            self.g, entrance, exit) - {entrance, exit})
-        cur_bubble_graph_reads = set(self.get_all_reads(interior_nodes))
-        cur_bubble_aligning_reads = self.get_aligning_reads(interior_nodes)
-        logger.debug("Current bubble has %d reads used for its interior and "
-                     "%d reads aligning to this bubble.",
-                     len(cur_bubble_graph_reads),
-                     len(cur_bubble_aligning_reads))
-        spanning_reads = self.prev_aligning_reads & cur_bubble_aligning_reads
+    def get_relevant_alignments(self, spanning_reads: Set[OrientedRead],
+                                cur_bubble_graph_reads: Set[OrientedRead]
+                                ) -> RelevantLA:
+        """Get all alignments of the given spanning reads that either involve
+        one of the reads in the interior of one of the previous bubbles or
+        one of the reads in the interior of the current bubble.
 
-        if (len(spanning_reads) < self.min_spanning_reads and
-                len(self.possible_haplotypes) > 1):
-            # No reads spanning the previous bubbles and the current one.
-            # This means we're actually starting a new haplotype block. But,
-            # our `possible_haplotypes` may still be filled with possible
-            # candidates, from which none we can link to the current bubble.
-            # So, we only keep the most likely candidates, and pick a random
-            # one from that list.
-            self.prune(1.0, bubble_num)
-            random_candidate = random.choice(self.possible_haplotypes)
-            random_candidate.new_block()
-            self.possible_haplotypes = [random_candidate]
+        This ensures we only obtain alignments that do not involve an entrance
+        or exit, and we ignore any alignments in following bubbles.
+        """
 
-        # Based on the relevant reads, collect all relevant local alignments.
-        # We ignore local alignments downstream of the current bubble.
         relevant_la = defaultdict(set)
-        total_relevant_la = 0
         for read in spanning_reads:
             for la in self.alignments[read]:
                 a_read, b_read = la.get_oriented_reads()
@@ -267,17 +301,14 @@ class BubbleChainPhaser:
                     continue
 
                 relevant_la[read].add(la)
-                total_relevant_la += 1
 
-        if len(spanning_reads) < self.min_spanning_reads:
-            logger.info("New haploblock at bubble <%s, %s>, because %s "
-                        " spanning reads is not enough.", entrance, exit,
-                        len(spanning_reads))
-        else:
-            logger.info("%d spanning reads inducing %d relevant local "
-                        "alignments between bubble <%s, %s> and bubble "
-                        "<%s, %s>", len(spanning_reads), total_relevant_la,
-                        *self.prev_bubble, entrance, exit)
+        return relevant_la
+
+    def branch(self, entrance: Node, exit: Node,
+               relevant_la: RelevantLA,
+               check_threshold: bool=True) -> List[HaplotypeSet]:
+        """Generate all new possible haplotype extensions for a
+        bubble (`entrance`, `exit`)."""
 
         # We're using a list of tuples because tuples are immutable and can be
         # used as dict keys, and more importantly in a `collections.Counter` to
@@ -290,30 +321,25 @@ class BubbleChainPhaser:
                     len(possible_paths), entrance, exit)
 
         new_haplotype_sets = []
-        for haplotype_set in self.possible_haplotypes:
+        for haplotype_set in self.candidate_sets:
             new_haplotype_sets.extend(
                 self.generate_new_hsets(haplotype_set, possible_paths,
-                                        relevant_la, bubble_num)
+                                        relevant_la, check_threshold)
             )
 
-        self.possible_haplotypes = new_haplotype_sets
-
-        self.prev_bubble = (entrance, exit)
-        self.prev_aligning_reads.update(cur_bubble_aligning_reads)
-        self.prev_graph_reads.update(cur_bubble_graph_reads)
-
-        return len(spanning_reads) < self.min_spanning_reads
+        return new_haplotype_sets
 
     def generate_new_hsets(self, haplotype_set: HaplotypeSet,
                            possible_paths: List[Tuple[OrientedDNASegment]],
                            relevant_la: RelevantLA,
-                           bubble_num: int) -> Iterable[HaplotypeSet]:
+                           check_threshold: bool=True
+                           ) -> Iterable[HaplotypeSet]:
         """For a given haplotype set, generate all possible extensions at the
         current bubble. Only yield the new haplotype sets that have a relative
         likelihood above a given threshold."""
 
         if callable(self.threshold):
-            threshold = self.threshold(bubble_num / self.num_bubbles)
+            threshold = self.threshold(len(relevant_la))
         else:
             threshold = self.threshold
 
@@ -322,7 +348,7 @@ class BubbleChainPhaser:
         else:
             threshold = math.log10(threshold)
 
-        if bubble_num == 0 or len(relevant_la) < self.min_spanning_reads:
+        if len(relevant_la) < self.min_spanning_reads:
             # For the first bubble the order does not matter, as a permutation
             # in a different order will in the end result in the same haplotype
             # set. The same holds when there are no spanning reads between
@@ -348,53 +374,55 @@ class BubbleChainPhaser:
             # For the first bubble in a new haploblock we just generate all
             # candidates without any relative likelihood calculation, because
             # we don't have enough spanning reads to do so.
-            if len(relevant_la) < self.min_spanning_reads:
+            rl = self.calculate_rl(haplotype_set, extension, ext_read_sets,
+                                   relevant_la, num_possible_sets)
+
+            if not check_threshold:
                 new_set = haplotype_set.extend(extension, ext_read_sets)
+                new_set.log_rl = rl
                 yield new_set
-            else:
-                rl = self.calculate_rl(haplotype_set, extension, ext_read_sets,
-                                       relevant_la, num_possible_sets,
-                                       bubble_num)
+            elif rl >= threshold:
+                new_set = haplotype_set.extend(extension, ext_read_sets)
+                new_set.log_rl = rl
+                yield new_set
 
-                if rl >= threshold:
-                    new_set = haplotype_set.extend(extension, ext_read_sets)
-                    new_set.log_rl = rl
-                    yield new_set
+    def prune(self, candidate_sets: List[HaplotypeSet],
+              prune_factor: PruneParam):
+        """Prune the list of candidate haplotype sets, by removing unlikely
+        haplotype sets, compared to the most likely haplotype set."""
 
-    def prune(self, prune_factor: PruneParam, bubble_num: int):
-        """Prune the list of possible haplotypes, by removing unlikely
-        haplotypes, compared to the most likely haplotype."""
+        num_before = len(candidate_sets)
+        logger.debug("Number of candidate sets: %d", num_before)
 
-        num_before = len(self.possible_haplotypes)
-        logger.debug("Number of possible haplotypes: %d", num_before)
-
-        if len(self.possible_haplotypes) < 2:
-            return
+        if len(candidate_sets) < 2:
+            return candidate_sets
 
         if callable(prune_factor):
-            prune_factor = prune_factor(bubble_num / (self.num_bubbles-1))
+            prune_factor = prune_factor(len(candidate_sets))
 
-        if prune_factor > 0.0:
-            prune_factor = math.log10(prune_factor)
-        else:
-            prune_factor = float('-inf')
+        if prune_factor <= 0.0:
+            return candidate_sets
 
-        max_likelihood = max(hs.log_rl for hs in self.possible_haplotypes)
+        prune_factor = math.log10(prune_factor)
+        max_likelihood = max(hs.log_rl for hs in candidate_sets)
 
-        logger.info("Max relative likelihood: %.5f", max_likelihood)
-        logger.info("Other relative likelihoods: %s", ", ".join(
-            "{:.2f}".format(hs.log_rl) for hs in self.possible_haplotypes))
+        logger.info("Max log relative likelihood: %.5f", max_likelihood)
+        logger.info("Other log relative likelihoods: %s", ", ".join(
+            "{:.2f}".format(hs.log_rl) for hs in candidate_sets))
 
         if max_likelihood != float('-inf'):
-            self.possible_haplotypes = [
-                hs for hs in self.possible_haplotypes if
+            candidate_sets = [
+                hs for hs in candidate_sets if
                 (hs.log_rl - max_likelihood) >= prune_factor
             ]
 
-        num_after = len(self.possible_haplotypes)
+        num_after = len(candidate_sets)
 
-        logger.info("Pruned %d unlikely haplotype sets, %d left.",
-                    (num_before - num_after), num_after)
+        logger.info("Pruned %d unlikely haplotype sets with prune factor %.2f,"
+                    " %d left.",
+                    (num_before - num_after), 10.0**prune_factor, num_after)
+
+        return candidate_sets
 
     def get_aligning_reads(self, nodes: List[Node]) -> Set[OrientedRead]:
         aligning_reads = set()  # type: Set[OrientedRead]
@@ -423,8 +451,7 @@ class BubbleChainPhaser:
     def calculate_rl(self, hs: HaplotypeSet, extension: List[Tuple[Node]],
                      ext_read_sets: List[Set[OrientedRead]],
                      relevant_la: RelevantLA,
-                     num_possible_sets: int,
-                     bubble_num: int) -> float:
+                     num_possible_sets: int) -> float:
         """Calculate the relative likelihood of a haplotype set extension,
         assuming the given haplotype set is correct."""
 
@@ -466,12 +493,8 @@ class BubbleChainPhaser:
                     # `branch`), b_read is the read in the assembly graph.
                     a_read, b_read = la.get_oriented_reads()
                     if b_read in hap_read_set or b_read in ext_read_set:
-                        if overlap_start == -1:
-                            overlap_start = la.arange[0]
-                            overlap_end = la.arange[1]
-                        else:
-                            overlap_start = min(overlap_start, la.arange[0])
-                            overlap_end = max(overlap_end, la.arange[1])
+                        overlap_start = min(overlap_start, la.arange[0])
+                        overlap_end = max(overlap_end, la.arange[1])
 
                 if overlap_start < overlap_end:
                     hap_prob = (overlap_end - overlap_start) / len(read)
