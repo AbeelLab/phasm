@@ -6,6 +6,7 @@ This module contains the algorithm to phase a haplograph to a set of linear DNA
 strings, each representing a chromosome copy.
 """
 
+import sys
 import math
 import random
 import logging
@@ -174,6 +175,7 @@ class BubbleChainPhaser:
         while curr_node:
             if curr_node in bubble_sources:
                 # Update possible haplotype sets
+                logger.info("----")
                 logger.info("Branch and prune for bubble %d/%d",
                             bubble_num+1, self.num_bubbles)
                 new_block = self.branch(curr_node, bubbles[curr_node],
@@ -343,6 +345,9 @@ class BubbleChainPhaser:
                 # bubble
                 ext_read_sets.append(set(self.get_all_reads(hap_ext[1:-1])))
 
+            # For the first bubble in a new haploblock we just generate all
+            # candidates without any relative likelihood calculation, because
+            # we don't have enough spanning reads to do so.
             if len(relevant_la) < self.min_spanning_reads:
                 new_set = haplotype_set.extend(extension, ext_read_sets)
                 yield new_set
@@ -444,32 +449,43 @@ class BubbleChainPhaser:
         if len(relevant_la) < self.min_spanning_reads:
             return 0.0
 
-        # Calculate P[R|H_set',H_set]
-        hs_prob = 0.0
+        logger.debug("Haplotype read sets: %s", hs.read_sets)
+        logger.debug("Extension read sets: %s", ext_read_sets)
+
+        # Calculate P[R|H,E]
+        ext_prob = 0.0
         for read, alignments in relevant_la.items():
             read_prob = 0.0
             for hap_read_set, ext_read_set in zip(hs.read_sets, ext_read_sets):
-                num_explained = 0
+                # Check how much overlap this read has with the current
+                # haplotype
+                overlap_start = sys.maxsize
+                overlap_end = 0
                 for la in alignments:
-                    # The a_read is the read that spans two bubbles (by
-                    # construction, see also `branch`), so the b_read should
-                    # either be a node in the previous haplotype or in the
-                    # current extension
+                    # a_read is the spanning read by construction (see
+                    # `branch`), b_read is the read in the assembly graph.
                     a_read, b_read = la.get_oriented_reads()
                     if b_read in hap_read_set or b_read in ext_read_set:
-                        num_explained += 1
+                        if overlap_start == -1:
+                            overlap_start = la.arange[0]
+                            overlap_end = la.arange[1]
+                        else:
+                            overlap_start = min(overlap_start, la.arange[0])
+                            overlap_end = max(overlap_end, la.arange[1])
 
-                hap_prob = num_explained / len(alignments)
-                read_prob += hap_prob
+                if overlap_start < overlap_end:
+                    hap_prob = (overlap_end - overlap_start) / len(read)
+                    read_prob += hap_prob
 
             read_prob /= self.ploidy
+            logger.debug("Read probability: %.4f", read_prob)
 
             if read_prob == 0.0:
-                hs_prob += float('-inf')
+                ext_prob += float('-inf')
             else:
-                hs_prob += math.log10(read_prob)
+                ext_prob += math.log10(read_prob)
 
-        # Calculate P[H_set'|H_set] prior, assumed equal for all haplotype sets
+        # Calculate P[E] prior, assumed equal for all haplotype sets
         # except for sets with duplicate paths
         multiplicities = Counter(extension)
 
@@ -479,14 +495,9 @@ class BubbleChainPhaser:
             multiplicity_sum += multiplicity
             multinomial_coeff *= binom(multiplicity_sum, multiplicity)
 
-        prior = multinomial_coeff / num_possible_sets
+        prior = math.log10(multinomial_coeff / num_possible_sets)
 
-        logger.debug("Multiplicities: %s, multinomial coefficient: %d, "
-                     "prior: %.3f",
-                     ", ".join(map(str, multiplicities.values())),
-                     multinomial_coeff, prior)
+        logger.debug("log(P[R|H,E]) = %.3f, log(P[E]) = %.3f", ext_prob, prior)
+        logger.debug("log RL[E|H,R] = %.3f", ext_prob + prior)
 
-        hs_prob += math.log10(prior)
-        logger.debug("Relative likelihood: %.5f", hs_prob)
-
-        return hs_prob
+        return ext_prob + prior
