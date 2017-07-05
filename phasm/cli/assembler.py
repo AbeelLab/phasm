@@ -170,12 +170,19 @@ def chain(args):
     num_components = 0
     num_bubblechains = 0
 
-    if args.format.startswith("gfa"):
-        ext = "gfa"
-    elif args.format == "graphml":
-        ext = "graphml"
-    else:
-        logger.critical("Invalid output format specifified: %s", args.format)
+    allowed_formats = {'gfa1', 'gfa2', 'graphml'}
+    formats = []
+    for file_format in args.format.split(','):
+        file_format = file_format.strip()
+
+        if file_format in allowed_formats:
+            formats.append(file_format)
+        else:
+            logger.warning("File format '%s' not recognised, ignoring.",
+                           file_format)
+
+    if not formats:
+        logger.critical("No valid file formats specified.")
         sys.exit(1)
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -194,27 +201,39 @@ def chain(args):
             for n in bubblechain.nodes_iter():
                 component.node[n]['bubblechain'] = j
 
-            filename = "component{}.bubblechain{}.{}".format(i, j, ext)
-            path = os.path.join(args.output_dir, filename)
-            with open(path, "w") as f:
-                if args.format == 'gfa1':
-                    gfa.gfa1_write_graph(f, bubblechain)
-                elif args.format == 'gfa2':
-                    gfa.gfa2_write_graph(f, bubblechain)
+            filename_tpl = "component{}.bubblechain{}.".format(i, j)
+            for file_format in formats:
+                if file_format.startswith('gfa'):
+                    version = int(file_format[-1])
+                    filename = filename_tpl + "gfa"
+                    path = os.path.join(args.output_dir, filename)
+
+                    with open(path, "w") as f:
+                        gfa.write_graph(f, bubblechain, version)
                 else:
-                    networkx.write_graphml(bubblechain, f, encoding='unicode')
+                    filename = filename_tpl + "graphml"
+                    path = os.path.join(args.output_dir, filename)
+                    with open(path, "w") as f:
+                        networkx.write_graphml(bubblechain, f,
+                                               encoding='unicode')
 
             num_bubblechains += 1
 
-        filename = "component{}.{}".format(i, ext)
-        path = os.path.join(args.output_dir, filename)
-        with open(path, "w") as f:
-            if args.format == 'gfa1':
-                gfa.gfa1_write_graph(f, component)
-            elif args.format == 'gfa2':
-                gfa.gfa2_write_graph(f, component)
+        filename_tpl = "component{}.".format(i)
+        for file_format in formats:
+            if file_format.startswith('gfa'):
+                version = int(file_format[-1])
+                filename = filename_tpl + "gfa"
+                path = os.path.join(args.output_dir, filename)
+
+                with open(path, "w") as f:
+                    gfa.write_graph(f, component, version)
             else:
-                networkx.write_graphml(component, f, encoding='unicode')
+                filename = filename_tpl + "graphml"
+                path = os.path.join(args.output_dir, filename)
+                with open(path, "w") as f:
+                    networkx.write_graphml(component, f,
+                                           encoding='unicode')
 
         num_components += 1
 
@@ -373,13 +392,18 @@ def main():
     chain_parser.set_defaults(func=chain)
 
     chain_parser.add_argument(
-        '-f', '--format', default="gfa2", choices=("gfa1", "gfa2", "graphml"),
-        help="Output format (default: GFA2)."
+        '-f', '--format', default="gfa2",
+        help="Comma separated list of output formats. Supported: gfa1, gfa2, "
+             "graphml (default: only GFA2). If multiple formats given, each "
+             "bubble chain will get a file in each specified format. This "
+             "allows you for example to both write GFA2 and GraphML files "
+             "at the same time."
     )
     chain_parser.add_argument(
         '-o', '--output-dir',
         help="Output directory. If the directory does not exist, it will "
-             "be created."
+             "be created. All identified bubble chains will be written to a "
+             "separate file in this directory."
     )
     chain_parser.add_argument(
         'graph_gfa',
