@@ -27,7 +27,7 @@ def fasta2dazzdb(args: argparse.Namespace):
     if not file_format:
         if args.input != sys.stdin:
             filename = args.input.name
-            file_ext = filename[filename.rfind('.'):]
+            file_ext = filename[filename.rfind('.')+1:]
 
             file_format = 'fastq' if file_ext in ('fq', 'fastq') else 'fasta'
 
@@ -160,7 +160,7 @@ def main():
              "to the trace point spacing value."
     )
     da2gfa_parser.add_argument(
-        '-T', '--translations', type=argparse.FileType('r'), required=False,
+        '-T', '--translations', type=str, required=False,
         default=None, metavar='TRANSLATION_FILE',
         help="Give a map which translates DALIGNER sequence ID's to something "
              "else. Should be a JSON file with a single object containing "
@@ -218,7 +218,7 @@ def main():
     )
 
     fasta2dazzdb_parser.add_argument(
-        '-T', '--translations', default=None,
+        '-T', '--translations', default=None, type=argparse.FileType('w'),
         required=False, metavar="TRANSLATIONS_FILE",
         help="Generate a JSON file which contains an new_name: old_name "
              "mapping so you can easility retreive the original name again "
