@@ -224,6 +224,13 @@ def gfa_header(version: str="2.0", trace_spacing: int=None) -> str:
     return gfa_line(*parts)
 
 
+def write_graph(f: TextIO, g: AssemblyGraph, version=2, **kwargs):
+    if version == 1:
+        return gfa1_write_graph(f, g, **kwargs)
+    else:
+        return gfa2_write_graph(f, g, **kwargs)
+
+
 def gfa1_write_graph(f: TextIO, g: AssemblyGraph,
                      with_orig_segments: SegmentMapping=None):
     f.write(gfa_header("1.0"))

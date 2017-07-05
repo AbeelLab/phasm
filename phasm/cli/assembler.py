@@ -136,15 +136,22 @@ def layout(args):
 
     logger.info("Writing graph...")
 
-    if args.format == 'gfa1':
-        gfa.gfa1_write_graph(args.output, g)
-    elif args.format == 'gfa2':
-        gfa.gfa2_write_graph(args.output, g)
-    elif args.format == 'graphml':
-        networkx.write_graphml(g, args.output, encoding='unicode')
-    else:
-        logger.critical("Invalid output format specified: %s", args.format)
-        sys.exit(1)
+    if not args.output:
+        args.output = [sys.stdout]
+
+    for f in args.output:
+        if f == sys.stdout:
+            gfa.write_graph(f, g, args.gfa_version)
+        else:
+            ext = f.name[f.name.rfind('.')+1:]
+
+            if ext == 'gfa':
+                gfa.write_graph(f, g, args.gfa_version)
+            elif ext == 'graphml':
+                networkx.write_graphml(g, f, encoding='unicode')
+            else:
+                logger.error("File extension '%s' not recognised, ignoring "
+                             "output file %s.", ext, f.name)
 
 
 def chain(args):
@@ -342,13 +349,17 @@ def main():
     )
 
     layout_io_group.add_argument(
-        '-f', '--format', choices=('gfa1', 'gfa2', 'graphml'), default='gfa2',
-        help="Output format (default gfa2)."
+        '-g', '--gfa-version', choices=(1, 2), default=2,
+        help="Which GFA version to use when writing a graph to a GFA file "
+             "(default GFA2)."
     )
     layout_io_group.add_argument(
-        '-o', '--output', type=argparse.FileType('w'), default=sys.stdout,
-        metavar="FILE",
-        help="Output file (default stdout)"
+        '-o', '--output', type=argparse.FileType('w'), default=[],
+        metavar="FILE", action="append",
+        help="Output file (default stdout). If a filename is given, it checks "
+             "the file extension for output type. Supported file extensions "
+             "are 'graphml' and 'gfa'. This option can be used multiple times "
+             "to write multiple files."
     )
     layout_io_group.add_argument(
         'gfa_file', help="Input GFA2 file with all pairwise local alignments."
