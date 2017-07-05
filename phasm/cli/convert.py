@@ -67,7 +67,12 @@ def daligner2gfa(args: argparse.Namespace):
     read_lengths = {}
     read_id_trans = {}
     if args.translations:
-        read_id_trans = json.load(args.translations)
+        if os.path.isfile(args.translations):
+            with open(args.translations) as f:
+                read_id_trans = json.load(f)
+        else:
+            logger.warning("Translations file '{}' does not exists, "
+                           "ignoring.".format(args.translations_file))
 
     logger.info("Importing DAZZ_DB reads...")
 
@@ -213,7 +218,7 @@ def main():
     )
 
     fasta2dazzdb_parser.add_argument(
-        '-T', '--translations', type=argparse.FileType('w'), default=None,
+        '-T', '--translations', default=None,
         required=False, metavar="TRANSLATIONS_FILE",
         help="Generate a JSON file which contains an new_name: old_name "
              "mapping so you can easility retreive the original name again "
