@@ -1,7 +1,7 @@
 import enum
 import logging
-from typing import Iterable, Union
-from collections import defaultdict, OrderedDict
+from typing import Iterable, Union, Set, Tuple
+from collections import defaultdict, OrderedDict, deque
 
 import networkx
 
@@ -54,7 +54,7 @@ class AssemblyGraph(networkx.DiGraph):
 
             self.adj[v] = OrderedDict(sorted_iter)
 
-    def get_sequence(self, read: OrientedDNASegment):
+    def get_sequence(self, read: OrientedDNASegment) -> bytes:
         """Get the sequence for an oriented read. Mostly a convenience function
         which passes the request to `SequenceSource`."""
 
@@ -65,7 +65,7 @@ class AssemblyGraph(networkx.DiGraph):
         return self.sequence_src.get_sequence(read)
 
     def sequence_for_path(self, path: Path, edge_len: str='weight',
-                          include_last: bool=True):
+                          include_last: bool=True) -> bytes:
         """Get the actual DNA sequence for a path through the assembly graph.
         Requires `self.sequence_src` to be set."""
 
@@ -86,8 +86,18 @@ class AssemblyGraph(networkx.DiGraph):
 
         return b"".join(sequence_parts)
 
+    def path_length(self, path: Path, edge_len: str='weight',
+                    include_last: bool=True):
+        path = list(path)
+        edge_len_sum = sum(d[edge_len] for u, v, d in path)
+
+        if include_last:
+            edge_len_sum += len(path[-1][1])
+
+        return edge_len_sum
+
     def node_path_edges(self, nodes: Iterable[Node],
-                        data: Union[bool, str]=None):
+                        data: Union[bool, str]=None) -> Path:
         """A generator that yields the edges for a path between the given
         nodes. If an edge does not exists in the graph an exception is raised.
 
@@ -628,3 +638,69 @@ def build_bubblechains(g: AssemblyGraph,
 
             if len(subgraph_nodes) >= min_nodes:
                 yield networkx.subgraph(g, subgraph_nodes)
+
+
+def identify_contigs(g: AssemblyGraph, exclude_nodes: Set[Node],
+                     min_contig_len: int=5000
+                     ) -> Iterable[Tuple[bytes, Path]]:
+    """Identify linear non-branching path that would represent a contig if
+    you would spell the corresponding DNA sequence. This function only yields
+    the paths, it's up to the user to obtain the actual sequence.
+
+    Using the parameter `exclude_nodes` you can specify which nodes are already
+    included in a bubble chain, and therefore need to be ignored."""
+
+    edge_queue = deque(
+        e for e in g.edges_iter() if
+        (g.in_degree(e[0]) == 0 or g.in_degree(e[0]) > 1) and
+        (e[0] not in exclude_nodes or e[1] not in exclude_nodes)
+    )
+
+    visited_edges = set()
+    while edge_queue:
+        e = edge_queue.popleft()
+        u, v = e
+
+        if e in visited_edges:
+            continue
+
+        visited_edges.add(e)
+
+        # Build a non-branching path
+        path = [u, v]
+        outgoing_edges = g.out_edges(v)
+        while len(outgoing_edges) == 1:
+            oe = outgoing_edges[0]
+            if oe in visited_edges:
+                break
+
+            if g.in_degree(oe[0]) > 1:
+                break
+
+            path.append(oe[1])
+            visited_edges.add(oe)
+
+            # Collect outgoing edges of next node
+            outgoing_edges = g.out_edges(oe[1])
+
+        path_len = g.path_length(g.node_path_edges(path, data=True))
+        if path_len >= min_contig_len:
+            yield path
+
+        # Check if we're at a branch point, and if so add other edges to the
+        # queue.
+        outgoing_edges = g.out_edges(path[-1])
+        if len(outgoing_edges) > 1:
+            for oe in outgoing_edges:
+                if oe[0] in exclude_nodes and oe[1] in exclude_nodes:
+                    continue
+
+                if oe not in visited_edges:
+                    edge_queue.append(oe)
+
+    # Check singleton nodes, could be long linear path merged to a single node.
+    singleton_nodes = (n for n in g.nodes_iter() if g.in_degree(n) == 0 and
+                       g.out_degree(n) == 0)
+    for n in singleton_nodes:
+        if len(n) >= min_contig_len:
+            yield [n]

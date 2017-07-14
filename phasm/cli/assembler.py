@@ -14,7 +14,8 @@ from phasm.typing import LocalAlignment
 from phasm.assembly_graph import (build_assembly_graph, clean_graph,
                                   remove_transitive_edges, remove_tips,
                                   make_symmetric, merge_unambiguous_paths,
-                                  average_coverage_path, build_bubblechains)
+                                  average_coverage_path, build_bubblechains,
+                                  identify_contigs)
 from phasm.filter import (ContainedReads, MaxOverhang, MinReadLength,
                           MinOverlapLength)
 from phasm.phasing import BubbleChainPhaser
@@ -104,6 +105,8 @@ def layout(args):
     g.remove_edges_from(edges_to_remove)
     num_asymm_edges += make_symmetric(g)
 
+    networkx.write_graphml(g, "uncleaned.graphml")
+
     logger.info("Removing tips...")
     num_in_tips, num_out_tips = remove_tips(g, args.max_tip_length)
     num_asymm_edges += make_symmetric(g)
@@ -154,6 +157,22 @@ def layout(args):
                              "output file %s.", ext, f.name)
 
 
+def _write_graphs(g, output_dir, filename_tpl, formats):
+    for file_format in formats:
+        if file_format.startswith('gfa'):
+            version = int(file_format[-1])
+            filename = filename_tpl + "gfa"
+            path = os.path.join(output_dir, filename)
+
+            with open(path, "w") as f:
+                gfa.write_graph(f, g, version)
+        else:
+            filename = filename_tpl + "graphml"
+            path = os.path.join(output_dir, filename)
+            with open(path, "w") as f:
+                networkx.write_graphml(g, f, encoding='unicode')
+
+
 def chain(args):
     logger.info("Readig reads and fragments part of the assembly graph...")
     graph_reads = {}
@@ -169,6 +188,7 @@ def chain(args):
     logger.info("Enumerate weakly connected components in the graph...")
     num_components = 0
     num_bubblechains = 0
+    num_contigs = 0
 
     allowed_formats = {'gfa1', 'gfa2', 'graphml'}
     formats = []
@@ -193,6 +213,7 @@ def chain(args):
                     i, networkx.number_of_nodes(component),
                     networkx.number_of_edges(component))
 
+        bubblechain_nodes = set()
         for j, bubblechain in enumerate(build_bubblechains(component)):
             logger.info("Found bubblechain #%d with %d nodes and %d edges",
                         j, networkx.number_of_nodes(bubblechain),
@@ -201,44 +222,37 @@ def chain(args):
             for n in bubblechain.nodes_iter():
                 component.node[n]['bubblechain'] = j
 
-            filename_tpl = "component{}.bubblechain{}.".format(i, j)
-            for file_format in formats:
-                if file_format.startswith('gfa'):
-                    version = int(file_format[-1])
-                    filename = filename_tpl + "gfa"
-                    path = os.path.join(args.output_dir, filename)
+            bubblechain_nodes.update(bubblechain.nodes_iter())
 
-                    with open(path, "w") as f:
-                        gfa.write_graph(f, bubblechain, version)
-                else:
-                    filename = filename_tpl + "graphml"
-                    path = os.path.join(args.output_dir, filename)
-                    with open(path, "w") as f:
-                        networkx.write_graphml(bubblechain, f,
-                                               encoding='unicode')
+            filename_tpl = "component{}.bubblechain{}.".format(i, j)
+            _write_graphs(bubblechain, args.output_dir, filename_tpl,
+                          formats)
 
             num_bubblechains += 1
 
-        filename_tpl = "component{}.".format(i)
-        for file_format in formats:
-            if file_format.startswith('gfa'):
-                version = int(file_format[-1])
-                filename = filename_tpl + "gfa"
-                path = os.path.join(args.output_dir, filename)
+        logger.info("Building contigs not part of a bubble chain...")
+        for j, path in enumerate(identify_contigs(
+                component, bubblechain_nodes, args.min_length)):
+            # Update attribute for visualisation in Cytoscape (or other
+            # graph viewer)
+            if len(path) > 1:
+                for u, v in g.node_path_edges(path):
+                    component[u][v]['contig'] = j
 
-                with open(path, "w") as f:
-                    gfa.write_graph(f, component, version)
-            else:
-                filename = filename_tpl + "graphml"
-                path = os.path.join(args.output_dir, filename)
-                with open(path, "w") as f:
-                    networkx.write_graphml(component, f,
-                                           encoding='unicode')
+            filename_tpl = "component{}.contig{}.".format(i, j)
+            _write_graphs(g.subgraph(path), args.output_dir, filename_tpl,
+                          formats)
+
+            num_contigs += 1
+
+        filename_tpl = "component{}.".format(i)
+        _write_graphs(component, args.output_dir, filename_tpl, formats)
 
         num_components += 1
 
-    logger.info("Built %d bubblechains from %d weakly connected components.",
-                num_bubblechains, num_components)
+    logger.info("Built %d bubblechains and %d contigs from %d weakly "
+                "connected components.",
+                num_bubblechains, num_contigs, num_components)
 
 
 def phase(args):
@@ -390,6 +404,14 @@ def main():
     chain_parser = subparsers.add_parser(
         'chain', help="Identify and build bubblechains")
     chain_parser.set_defaults(func=chain)
+
+    chain_parser.add_argument(
+        '-l', '--min-length', type=int, required=False, default=5000,
+        help="Some paths in the assembly graph are not part of a bubble chain,"
+             " PHASM will not try to phase these paths but outputs them as "
+             "'normal' contigs. With this flag you can specify the minimum "
+             "length of a contig to be included (default: 5000)."
+    )
 
     chain_parser.add_argument(
         '-f', '--format', default="gfa2",
