@@ -12,7 +12,7 @@ import random
 import logging
 from itertools import combinations_with_replacement, product
 from typing import List, Iterable, Set, Tuple
-from collections import OrderedDict, deque, defaultdict, Counter
+from collections import OrderedDict, deque, Counter
 
 import networkx
 from scipy.stats import norm
@@ -21,7 +21,8 @@ from scipy.special import binom
 from phasm.alignments import OrientedRead, OrientedDNASegment, MergedReads
 from phasm.assembly_graph import AssemblyGraph
 from phasm.bubbles import find_superbubbles, superbubble_nodes
-from phasm.typing import Node, AlignmentsT, PruneParam, RelevantLA
+from phasm.typing import (Node, AlignmentsT, PruneParam, RelevantReadInfo,
+                          RelevantReads)
 
 logger = logging.getLogger(__name__)
 
@@ -132,40 +133,55 @@ class BubbleChainPhaser:
 
         self.candidate_sets = [HaplotypeSet(self.ploidy)]
 
-    def phase(self) -> Iterable[Tuple[HaplotypeSet, bool]]:
         # find_superbubbles finds superbubbles in reverse topological order
-        bubbles = OrderedDict(b for b in
-                              find_superbubbles(self.g, report_nested=False))
-        bubble_entrances = set(bubbles.keys())
-        self.num_bubbles = len(bubbles)
+        # Superbubbles without an interior are filtered, to make it a bit
+        # easier to identify subgraphs which are just linear paths instead of
+        # an actual bubble chain.
+        def non_branching_bubble(b):
+            """Filter superbubbles with an empty interior (i.e. there are no
+            other nodes between the entrance and exit)."""
 
-        start_points = [n for n in self.g.nodes_iter()
-                        if self.g.in_degree(n) == 0]
-        end_points = [n for n in self.g.nodes_iter()
-                      if self.g.out_degree(n) == 0]
+            s, t = b
+            return not (g.out_degree(s) == 1 and g.in_degree(t) == 1 and
+                        g.successors(s)[0] == t)
 
-        if len(start_points) > 1:
+        self.bubbles = OrderedDict(b for b in filter(
+            non_branching_bubble,
+            find_superbubbles(self.g, report_nested=False)
+        ))
+
+        self.bubble_entrances = set(self.bubbles.keys())
+        self.num_bubbles = len(self.bubbles)
+
+        self.start_points = [n for n in self.g.nodes_iter()
+                             if self.g.in_degree(n) == 0]
+        self.end_points = [n for n in self.g.nodes_iter()
+                           if self.g.out_degree(n) == 0]
+
+        if len(self.start_points) > 1:
             raise PhasingError("There are multiple nodes with in-degree 0, "
                                "not sure what the start point is.")
 
-        if len(end_points) > 1:
+        if len(self.end_points) > 1:
             raise PhasingError("Found multiple 'sink' nodes, this should not "
                                "be the case.")
 
-        logger.debug("Superbubbles: %s", bubbles)
+        logger.debug("Superbubbles: %s", self.bubbles)
+
+    def phase(self) -> Iterable[Tuple[HaplotypeSet, bool]]:
         logger.info("Start phasing haplograph with %d bubbles",
                     self.num_bubbles)
 
-        entrance = start_points[0]
+        entrance = self.start_points[0]
 
-        if entrance not in bubble_entrances:
+        if entrance not in self.bubble_entrances:
             raise PhasingError("Unexpected starting point '{}', this is not "
                                "a bubble entrance".format(entrance))
 
         bubble_num = 0
-        num_bubbles = len(bubbles)
-        while entrance in bubble_entrances:
-            exit = bubbles[entrance]
+        num_bubbles = len(self.bubbles)
+        while entrance in self.bubble_entrances:
+            exit = self.bubbles[entrance]
 
             logger.info("-----")
             logger.info("Current bubble <%s, %s> (%d/%d)", entrance, exit,
@@ -211,18 +227,18 @@ class BubbleChainPhaser:
             # current bubble.
             relevant_reads = (spanning_reads if not self.start_of_block else
                               cur_bubble_aligning_reads)
-            relevant_la = self.get_relevant_alignments(
+            rel_read_info = self.get_relevant_read_info(
                 relevant_reads, cur_bubble_graph_reads)
 
             total_relevant_la = 0
-            for alignments in relevant_la.values():
+            for alignments, _ in rel_read_info.values():
                 total_relevant_la += len(alignments)
 
             logger.info("%d relevant reads inducing %d relevant local "
                         "alignments", len(relevant_reads),
                         total_relevant_la)
 
-            new_haplotype_sets = self.branch(entrance, exit, relevant_la,
+            new_haplotype_sets = self.branch(entrance, exit, rel_read_info,
                                              not self.start_of_block)
 
             if new_haplotype_sets:
@@ -244,7 +260,8 @@ class BubbleChainPhaser:
                 # This list is guaranteed to be filled because candidates
                 # generated by the first bubble in a block are not yet
                 # filtered.
-                self.candidate_sets = self.branch(entrance, exit, relevant_la,
+                self.candidate_sets = self.branch(entrance, exit,
+                                                  rel_read_info,
                                                   check_threshold=False)
 
             # Move to next bubble
@@ -276,9 +293,9 @@ class BubbleChainPhaser:
 
         return random_best
 
-    def get_relevant_alignments(self, spanning_reads: Set[OrientedRead],
-                                cur_bubble_graph_reads: Set[OrientedRead]
-                                ) -> RelevantLA:
+    def get_relevant_read_info(self, relevant_reads: Set[OrientedRead],
+                               cur_bubble_graph_reads: Set[OrientedRead]
+                               ) -> RelevantReads:
         """Get all alignments of the given spanning reads that either involve
         one of the reads in the interior of one of the previous bubbles or
         one of the reads in the interior of the current bubble.
@@ -287,8 +304,10 @@ class BubbleChainPhaser:
         or exit, and we ignore any alignments in following bubbles.
         """
 
-        relevant_la = defaultdict(set)
-        for read in spanning_reads:
+        relevant_reads_info = {}
+        for read in relevant_reads:
+            alignments = set()
+            overlap_max = 0
             for la in self.alignments[read]:
                 a_read, b_read = la.get_oriented_reads()
 
@@ -300,12 +319,19 @@ class BubbleChainPhaser:
                     # down the graph (beyond the current bubble)
                     continue
 
-                relevant_la[read].add(la)
+                alignments.add(la)
+                overlap_max = max(overlap_max, la.arange[1])
 
-        return relevant_la
+            if alignments:
+                logger.debug("Relevant read %s with overlap_max = %d, "
+                             "alignments: %s", overlap_max, alignments)
+                relevant_reads_info[read] = RelevantReadInfo(alignments,
+                                                             overlap_max)
+
+        return relevant_reads_info
 
     def branch(self, entrance: Node, exit: Node,
-               relevant_la: RelevantLA,
+               relevant_reads: RelevantReads,
                check_threshold: bool=True) -> List[HaplotypeSet]:
         """Generate all new possible haplotype extensions for a
         bubble (`entrance`, `exit`)."""
@@ -324,14 +350,14 @@ class BubbleChainPhaser:
         for haplotype_set in self.candidate_sets:
             new_haplotype_sets.extend(
                 self.generate_new_hsets(haplotype_set, possible_paths,
-                                        relevant_la, check_threshold)
+                                        relevant_reads, check_threshold)
             )
 
         return new_haplotype_sets
 
     def generate_new_hsets(self, haplotype_set: HaplotypeSet,
                            possible_paths: List[Tuple[OrientedDNASegment]],
-                           relevant_la: RelevantLA,
+                           relevant_reads: RelevantReads,
                            check_threshold: bool=True
                            ) -> Iterable[HaplotypeSet]:
         """For a given haplotype set, generate all possible extensions at the
@@ -339,7 +365,7 @@ class BubbleChainPhaser:
         likelihood above a given threshold."""
 
         if callable(self.threshold):
-            threshold = self.threshold(len(relevant_la))
+            threshold = self.threshold(len(relevant_reads))
         else:
             threshold = self.threshold
 
@@ -348,19 +374,17 @@ class BubbleChainPhaser:
         else:
             threshold = math.log10(threshold)
 
-        if len(relevant_la) < self.min_spanning_reads:
+        if self.start_of_block:
             # For the first bubble the order does not matter, as a permutation
             # in a different order will in the end result in the same haplotype
-            # set. The same holds when there are no spanning reads between
-            # the previous bubble and the current one. We have no way of
-            # linking previous haplotypes to the current one (no read evidence)
-            # so this is like starting a new haplotype block
+            # set.
             extension_iter = iter(combinations_with_replacement(possible_paths,
                                                                 self.ploidy))
             num_possible_sets = binom(self.ploidy + len(possible_paths) - 1,
                                       self.ploidy)
         else:
-            # Otherwise all possible k-tuples of possible paths
+            # Otherwise all possible k-tuples of possible paths, because now
+            # order does matter
             extension_iter = iter(product(possible_paths, repeat=self.ploidy))
             num_possible_sets = self.ploidy**len(possible_paths)
 
@@ -375,7 +399,7 @@ class BubbleChainPhaser:
             # candidates without any relative likelihood calculation, because
             # we don't have enough spanning reads to do so.
             rl = self.calculate_rl(haplotype_set, extension, ext_read_sets,
-                                   relevant_la, num_possible_sets)
+                                   relevant_reads, num_possible_sets)
 
             if not check_threshold:
                 new_set = haplotype_set.extend(extension, ext_read_sets)
@@ -407,7 +431,7 @@ class BubbleChainPhaser:
         max_likelihood = max(hs.log_rl for hs in candidate_sets)
 
         logger.info("Max log relative likelihood: %.5f", max_likelihood)
-        logger.info("Other log relative likelihoods: %s", ", ".join(
+        logger.debug("Other log relative likelihoods: %s", ", ".join(
             "{:.2f}".format(hs.log_rl) for hs in candidate_sets))
 
         if max_likelihood != float('-inf'):
@@ -450,7 +474,7 @@ class BubbleChainPhaser:
 
     def calculate_rl(self, hs: HaplotypeSet, extension: List[Tuple[Node]],
                      ext_read_sets: List[Set[OrientedRead]],
-                     relevant_la: RelevantLA,
+                     relevant_reads: RelevantReads,
                      num_possible_sets: int) -> float:
         """Calculate the relative likelihood of a haplotype set extension,
         assuming the given haplotype set is correct."""
@@ -473,7 +497,7 @@ class BubbleChainPhaser:
         # if len(relevant_la) == 0:
         #     return coverage_prob
 
-        if len(relevant_la) < self.min_spanning_reads:
+        if len(relevant_reads) < self.min_spanning_reads:
             return 0.0
 
         logger.debug("Haplotype read sets: %s", hs.read_sets)
@@ -481,23 +505,24 @@ class BubbleChainPhaser:
 
         # Calculate P[R|H,E]
         ext_prob = 0.0
-        for read, alignments in relevant_la.items():
+        for read, info in relevant_reads.items():
             read_prob = 0.0
             for hap_read_set, ext_read_set in zip(hs.read_sets, ext_read_sets):
                 # Check how much overlap this read has with the current
                 # haplotype
                 overlap_start = sys.maxsize
                 overlap_end = 0
-                for la in alignments:
+                for la in info.alignments:
                     # a_read is the spanning read by construction (see
-                    # `branch`), b_read is the read in the assembly graph.
+                    # `phase` and `get_relevant_read_info`), b_read is the
+                    # read in the assembly graph.
                     a_read, b_read = la.get_oriented_reads()
                     if b_read in hap_read_set or b_read in ext_read_set:
                         overlap_start = min(overlap_start, la.arange[0])
                         overlap_end = max(overlap_end, la.arange[1])
 
                 if overlap_start < overlap_end:
-                    hap_prob = (overlap_end - overlap_start) / len(read)
+                    hap_prob = (overlap_end - overlap_start) / info.overlap_max
                     read_prob += hap_prob
 
             read_prob /= self.ploidy

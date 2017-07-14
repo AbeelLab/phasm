@@ -281,14 +281,14 @@ def phase(args):
     sequence_src = FastaSource(args.reads_fasta)
 
     with dinopy.FastaWriter(args.output, force_overwrite=True) as fw:
-        for bubblechain_gfa in args.bubblechain_gfa:
-            logger.info("Bubblechain %s", bubblechain_gfa)
+        for gfa_file in args.subgraphs:
+            logger.info("Subgraph %s", gfa_file)
             logger.info("Readig reads and fragments part of assembly graph...")
-            with open(bubblechain_gfa) as f:
+            with open(gfa_file) as f:
                 graph_reads = gfa.gfa2_parse_segments_with_fragments(f)
 
             logger.info("Reconstructing assembly graph...")
-            with open(bubblechain_gfa) as f:
+            with open(gfa_file) as f:
                 g = gfa.gfa2_reconstruct_assembly_graph(f, graph_reads, reads)
 
             g.sequence_src = sequence_src
@@ -300,22 +300,40 @@ def phase(args):
                                        args.min_spanning_reads, args.threshold,
                                        args.prune_factor)
 
-            for i, (haploblock, include_last) in enumerate(phaser.phase()):
-                # Output the DNA sequence for each haplotype
-                logger.info("Haploblock %d, building DNA sequences for each "
-                            "haplotype...", i)
-                id_base = bubblechain_gfa[:bubblechain_gfa.rfind('.')]
-                for j, haplotype in enumerate(haploblock.haplotypes):
+            id_base = os.path.basename(gfa_file[:gfa_file.rfind('.')])
+            if len(phaser.bubbles) == 0:
+                logger.info("No bubbles found, simple contig path with %d "
+                            "nodes.", g.number_of_nodes())
+                # This is just a simple "contig" path (linear non-braching
+                # path)
+                if g.number_of_nodes() == 1:
+                    seq = g.get_sequence(g.nodes()[0])
+                else:
                     seq = g.sequence_for_path(
-                        g.node_path_edges(haplotype, data=True),
-                        include_last=include_last
+                        g.node_path_edges(networkx.topological_sort(g),
+                                          data=True),
+                        edge_len=g.edge_len
                     )
 
-                    name = "{}.haploblock{}.{}".format(
-                        id_base, i, j).encode('ascii')
-                    fw.write_entry((seq, name))
+                fw.write_entry((seq, id_base.encode('ascii')))
+            else:
+                logger.info("Bubble chain with %d bubbles",
+                            len(phaser.bubbles))
+                for i, (haploblock, include_last) in enumerate(phaser.phase()):
+                    # Output the DNA sequence for each haplotype
+                    logger.info("Haploblock %d, building DNA sequences for "
+                                "each haplotype...", i)
+                    for j, haplotype in enumerate(haploblock.haplotypes):
+                        seq = g.sequence_for_path(
+                            g.node_path_edges(haplotype, data=True),
+                            include_last=include_last
+                        )
 
-            logger.info("Done with %s", bubblechain_gfa)
+                        name = "{}.haploblock{}.{}".format(
+                            id_base, i, j).encode('ascii')
+                        fw.write_entry((seq, name))
+
+            logger.info("Done with %s", gfa_file)
 
 
 def main():
@@ -480,9 +498,9 @@ def main():
              " bubblechain GFA2 file."
     )
     phase_parser.add_argument(
-        'bubblechain_gfa', nargs='+',
-        help="The bubblechain graph GFA2 file(s). If given multiple files, "
-             "these files will be processed sequentially, but the DNA "
+        'subgraphs', nargs='+',
+        help="The bubblechain/contig graph GFA2 file(s). If given multiple "
+             "files, these files will be processed sequentially, but the DNA "
              "sequences will be written to the same file."
     )
 

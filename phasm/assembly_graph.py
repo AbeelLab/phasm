@@ -704,3 +704,23 @@ def identify_contigs(g: AssemblyGraph, exclude_nodes: Set[Node],
     for n in singleton_nodes:
         if len(n) >= min_contig_len:
             yield [n]
+
+
+def remove_diamond_tips(g: AssemblyGraph):
+    end_nodes = [n for n in g.nodes_iter() if g.out_degree(n) == 0 and
+                 g.in_degree(n) == 2]
+
+    for node in end_nodes:
+        pred_out_degree1 = None
+        pred_out_degree_gt1 = None
+        for pred in g.predecessors_iter(node):
+            if g.out_degree(pred) == 1 and g.in_degree(pred) == 1:
+                pred_out_degree1 = pred
+
+            if g.out_degree(pred) > 1:
+                pred_out_degree_gt1 = pred
+
+        if pred_out_degree1 and pred_out_degree_gt1:
+            # Diamond found
+            g.remove_node(node)
+            g.remove_node(pred_out_degree1)
