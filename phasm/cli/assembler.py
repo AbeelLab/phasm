@@ -108,7 +108,8 @@ def layout(args):
     networkx.write_graphml(g, "uncleaned.graphml")
 
     logger.info("Removing tips...")
-    num_in_tips, num_out_tips = remove_tips(g, args.max_tip_length)
+    num_in_tips, num_out_tips = remove_tips(g, args.max_tip_length,
+                                            args.max_tip_length_bases)
     num_asymm_edges += make_symmetric(g)
 
     logger.info("Removing isolated nodes...")
@@ -354,7 +355,6 @@ def main():
     # -------------------------------------------------------------------------
     # Layout command
     # -------------------------------------------------------------------------
-
     layout_parser = subparsers.add_parser(
         'layout', help="Build an assembly graph based on pairwise local "
                        "alignments."
@@ -395,6 +395,12 @@ def main():
         help="Maximum number of edges of a path to be called a tip "
              "(default: 4)."
     )
+    graph_cleaning_group.add_argument(
+        '-T', '--max-tip-length-bases', type=int, default=5000, required=False,
+        help="The maximum length (in bases instead of edges) of a tip "
+             "(default 5000)."
+    )
+
     graph_cleaning_group.add_argument(
         '-F', '--length-fuzz', type=int, default=1000, required=False,
         metavar="LENGTH",

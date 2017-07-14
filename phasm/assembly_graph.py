@@ -264,7 +264,8 @@ def remove_transitive_edges(g: AssemblyGraph, length_fuzz: int=1000):
     return edges_to_remove
 
 
-def remove_outgoing_tips(g: AssemblyGraph, max_tip_len: int=5):
+def remove_outgoing_tips(g: AssemblyGraph, max_tip_len: int=5,
+                         max_tip_len_bases: int=5000):
     """Remove short outgoing tips from the assembly graph.
 
     This function removes short "tips": paths which start at junction or a node
@@ -307,6 +308,11 @@ def remove_outgoing_tips(g: AssemblyGraph, max_tip_len: int=5):
                 is_tip = False
                 break
 
+            if g.path_length(g.node_path_edges(path, data=True), g.edge_len,
+                             include_last=False) > max_tip_len_bases:
+                is_tip = False
+                break
+
         if is_tip:
             # Path is a tip, remove it
             logger.debug("Removing tip: %s", path)
@@ -317,7 +323,8 @@ def remove_outgoing_tips(g: AssemblyGraph, max_tip_len: int=5):
     return num_tip_edges
 
 
-def remove_incoming_tips(g: AssemblyGraph, max_tip_len: int=5):
+def remove_incoming_tips(g: AssemblyGraph, max_tip_len: int=5,
+                         max_tip_len_bases: int=5000):
     """Remove short incoming tips from the assembly graph.
 
     This function removes short "tips": paths which start at junction or a node
@@ -359,6 +366,11 @@ def remove_incoming_tips(g: AssemblyGraph, max_tip_len: int=5):
                 is_tip = False
                 break
 
+            if g.path_length(g.node_path_edges(path, data=True), g.edge_len,
+                             include_last=False) > max_tip_len_bases:
+                is_tip = False
+                break
+
         if is_tip:
             # Path is a tip, remove it
             logger.debug("Removing tip: %s", path)
@@ -369,14 +381,15 @@ def remove_incoming_tips(g: AssemblyGraph, max_tip_len: int=5):
     return num_tip_edges
 
 
-def remove_tips(g: AssemblyGraph, max_tip_len: int=3):
+def remove_tips(g: AssemblyGraph, max_tip_len: int=3,
+                max_tip_len_bases: int=5000):
     """Remove both small incoming and outgoing tips.
 
     .. seealso:: remove_incoming_tips, remove_outgoing_tips
     """
 
-    num_incoming_tips = remove_incoming_tips(g, max_tip_len)
-    num_outgoing_tips = remove_outgoing_tips(g, max_tip_len)
+    num_incoming_tips = remove_incoming_tips(g, max_tip_len, max_tip_len_bases)
+    num_outgoing_tips = remove_outgoing_tips(g, max_tip_len, max_tip_len_bases)
 
     return num_incoming_tips, num_outgoing_tips
 
