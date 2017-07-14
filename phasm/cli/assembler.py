@@ -15,7 +15,7 @@ from phasm.assembly_graph import (build_assembly_graph, clean_graph,
                                   remove_transitive_edges, remove_tips,
                                   make_symmetric, merge_unambiguous_paths,
                                   average_coverage_path, build_bubblechains,
-                                  identify_contigs)
+                                  identify_contigs, remove_diamond_tips)
 from phasm.filter import (ContainedReads, MaxOverhang, MinReadLength,
                           MinOverlapLength)
 from phasm.phasing import BubbleChainPhaser
@@ -117,6 +117,9 @@ def layout(args):
     logger.info("Removed %d tip edges, %d isolated nodes, %d asymmetric "
                 "edges.",
                 num_in_tips+num_out_tips, num_isolated_nodes, num_asymm_edges)
+
+    num_diamond_tips = remove_diamond_tips(g)
+    logger.info("Removed %d diamond tips", num_diamond_tips)
 
     logger.info("Removing tips (stage 2)...")
     num_in_tips, num_out_tips = remove_tips(g, args.max_tip_length)
