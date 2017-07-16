@@ -154,21 +154,19 @@ def graph_to_dag(g: AssemblyGraph) -> Tuple[AssemblyGraph, networkx.DiGraph]:
                 dag.add_edge(u, v)
                 dag.add_edge(str(u) + '*', str(v) + '*')
 
-    if 'r_' not in g:
-        start_nodes = (n for n in dag.nodes_iter() if dag.in_degree(n) == 0)
-        for n in start_nodes:
-            if n == 'r_' or n == 're_':
-                continue
+    start_nodes = (n for n in dag.nodes_iter() if dag.in_degree(n) == 0)
+    for n in start_nodes:
+        if n == 'r_' or n == 're_':
+            continue
 
-            dag.add_edge('r_', n)
+        dag.add_edge('r_', n)
 
-    if 're_' not in g:
-        end_nodes = (n for n in dag.nodes_iter() if dag.out_degree(n) == 0)
-        for n in end_nodes:
-            if n == 'r_' or n == 're_':
-                continue
+    end_nodes = (n for n in dag.nodes_iter() if dag.out_degree(n) == 0)
+    for n in end_nodes:
+        if n == 'r_' or n == 're_':
+            continue
 
-            dag.add_edge(n, 're_')
+        dag.add_edge(n, 're_')
 
     return dag, dfs_tree
 
