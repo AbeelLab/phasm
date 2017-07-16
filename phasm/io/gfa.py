@@ -189,15 +189,13 @@ def gfa2_reconstruct_assembly_graph(gfa_file: TextIO,
             node1 = MergedReads(fragment.id, fragment.length, "+", reads,
                                 fragment.prefix_lengths)
             # Merged read nodes only occur in "forward" orientation, see
-            # `phasm.assembly_graph.merge_unambiguous_reads`
+            # `phasm.assembly_graph.merge_unambiguous_reads`.
             node2 = None
 
         nodes_map[str(node1)] = node1
-        g.add_node(node1)
 
         if node2:
             nodes_map[str(node2)] = node2
-            g.add_node(node2)
 
     # Parse edges, if `with_orig_reads` is given, use the mapping created above
     # to obtain the right nodes.
@@ -213,6 +211,21 @@ def gfa2_reconstruct_assembly_graph(gfa_file: TextIO,
             edge_len: length,
             overlap_len: overlap
         })
+
+    # Check for any singleton nodes which are given as segment, but do not have
+    # any edge connected, and therefore are not yet added to the graph.
+    added = set()
+    for name, node in nodes_map.items():
+        unoriented_name = name[:-1]
+
+        if unoriented_name in added:
+            continue
+
+        if node in g or node.reverse() in g:
+            continue
+
+        g.add_node(node)
+        added(unoriented_name)
 
     return g
 
