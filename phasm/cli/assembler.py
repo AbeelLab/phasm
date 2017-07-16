@@ -105,8 +105,6 @@ def layout(args):
     g.remove_edges_from(edges_to_remove)
     num_asymm_edges += make_symmetric(g)
 
-    networkx.write_graphml(g, "uncleaned.graphml")
-
     logger.info("Removing tips...")
     num_in_tips, num_out_tips = remove_tips(g, args.max_tip_length,
                                             args.max_tip_length_bases)
