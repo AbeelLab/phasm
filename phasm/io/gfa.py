@@ -225,7 +225,7 @@ def gfa2_reconstruct_assembly_graph(gfa_file: TextIO,
             continue
 
         g.add_node(node)
-        added(unoriented_name)
+        added.add(unoriented_name)
 
     return g
 
