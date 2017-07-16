@@ -1,6 +1,9 @@
 PHASM: Haplotype-aware *de novo* genome assembly for polyploid organisms
 ========================================================================
 
+[![Build 
+Status](https://travis-ci.org/lrvdijk/phasm.svg?branch=master)](https://travis-ci.org/lrvdijk/phasm)
+
 PHASM is a long read *de novo* genome assembler that phases variants among 
 chromosome homologues during the assembly process, and aims to output separate 
 contigs for each haplotype. The main idea in PHASM is to build bubble chains: 
