@@ -238,8 +238,7 @@ def test_find_superbubble_finder_dag(test_graph2, test_graph3, test_graph4):
     superbubbles = SuperBubbleFinderDAG(test_graph4)
     superbubble_set = set(iter(superbubbles))
 
-    assert superbubble_set == {('r_', 1), (1, 13), (2, 11),
-                               (7, 12), (13, 're_')}
+    assert superbubble_set == {(1, 13), (2, 11), (7, 12)}
 
 
 def test_find_superbubbles(test_graph, test_graph2, test_graph4):
