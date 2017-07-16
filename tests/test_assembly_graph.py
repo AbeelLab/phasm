@@ -1,14 +1,14 @@
 import pytest  # noqa
 
-from phasm.assembly_graph import (AssemblyGraph, remove_tips, node_path_edges,
+from phasm.assembly_graph import (AssemblyGraph, remove_tips,
                                   remove_transitive_edges, clean_graph)
 
 
 def test_tip_removal():
     g = AssemblyGraph()
-    g.add_edges_from(node_path_edges(['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7',
-                                      'v8', 'v9', 'v10', 'v11', 'v12', 'v13',
-                                      'v14', 'v15']))
+    g.add_edges_from(g.node_path_edges(['v1', 'v2', 'v3', 'v4', 'v5', 'v6',
+                                        'v7', 'v8', 'v9', 'v10', 'v11', 'v12',
+                                        'v13', 'v14', 'v15']))
 
     g.add_edges_from([
         ('v5', 'vt1'),
@@ -33,9 +33,9 @@ def test_tip_removal():
     assert num_isolated_nodes == 3
 
     g = AssemblyGraph()
-    g.add_edges_from(node_path_edges(['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7',
-                                      'v8', 'v9', 'v10', 'v11', 'v12', 'v13',
-                                      'v14', 'v15']))
+    g.add_edges_from(g.node_path_edges(['v1', 'v2', 'v3', 'v4', 'v5', 'v6',
+                                        'v7', 'v8', 'v9', 'v10', 'v11', 'v12',
+                                        'v13', 'v14', 'v15']))
 
     g.add_edges_from([
         ('vt1', 'vt2'),
@@ -62,8 +62,9 @@ def test_tip_removal():
 
 def test_transitive_reduction():
     g = AssemblyGraph()
-    g.add_edges_from(node_path_edges(['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7',
-                                      'v8', 'v9', 'v10', 'v11', 'v12']))
+    g.add_edges_from(g.node_path_edges(['v1', 'v2', 'v3', 'v4', 'v5', 'v6',
+                                        'v7', 'v8', 'v9', 'v10', 'v11',
+                                        'v12']))
 
     for u, v, data in g.edges_iter(data=True):
         data['weight'] = 1
