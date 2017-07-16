@@ -2,7 +2,7 @@ import os
 import sys
 import logging
 import argparse
-from typing import Iterable
+from typing import Iterable, TextIO
 from collections import defaultdict
 
 import dinopy
@@ -10,7 +10,7 @@ import networkx
 
 from phasm.io import gfa
 from phasm.io.sequences import FastaSource
-from phasm.typing import LocalAlignment
+from phasm.typing import ReadMapping, LocalAlignment, AlignmentsT
 from phasm.assembly_graph import (build_assembly_graph, clean_graph,
                                   remove_transitive_edges, remove_tips,
                                   make_symmetric, merge_unambiguous_paths,
@@ -257,30 +257,34 @@ def chain(args):
                 num_bubblechains, num_contigs, num_components)
 
 
+def _get_read_alignments(f: TextIO, reads: ReadMapping) -> AlignmentsT:
+    logger.info("Pass 2 of alignments GFA2 file to import all pairwise local "
+                "alignments...")
+    read_alignments = defaultdict(set)
+
+    la_iter = map(gfa.gfa2_line_to_la(reads),
+                  (l for l in f if l.startswith('E')))
+
+    for la in la_iter:
+        a_read, b_read = la.get_oriented_reads()
+        read_alignments[a_read].add(la)
+
+    logger.info("Done.")
+
+    return read_alignments
+
+
 def phase(args):
     # Original reads are used for assembly graph reconstruction below
-    logger.info("Pass [1/2] of GFA2 file to import all original reads "
+    logger.info("Pass 1 of alignments GFA2 file to import all original reads "
                 "(segments)...")
     with open(args.alignments_gfa) as f:
         reads = gfa.gfa2_parse_segments(f)
     logger.info("Read %d reads from GFA2 file.", len(reads))
 
-    # Original pairwise local alignments are used for likelihood calculation
-    logger.info("Pass [2/2] of GFA2 file to import all pairwise local "
-                "alignments...")
-    read_alignments = defaultdict(set)
-    with open(args.alignments_gfa) as f:
-        la_iter = map(gfa.gfa2_line_to_la(reads),
-                      (l for l in f if l.startswith('E')))
-
-        for la in la_iter:
-            a_read, b_read = la.get_oriented_reads()
-            read_alignments[a_read].add(la)
-
-    logger.info("Done.")
-
     # Setup sequence source
     sequence_src = FastaSource(args.reads_fasta)
+    read_alignments = None
 
     with dinopy.FastaWriter(args.output, force_overwrite=True) as fw:
         for gfa_file in args.subgraphs:
@@ -298,9 +302,8 @@ def phase(args):
             logger.info("Done.")
 
             logger.info("Start phasing process, ploidy %d...", args.ploidy)
-            phaser = BubbleChainPhaser(g, read_alignments, args.ploidy, None,
-                                       args.min_spanning_reads, args.threshold,
-                                       args.prune_factor)
+            phaser = BubbleChainPhaser(g, args.ploidy, args.min_spanning_reads,
+                                       args.threshold, args.prune_factor)
 
             id_base = os.path.basename(gfa_file[:gfa_file.rfind('.')])
             if len(phaser.bubbles) == 0:
@@ -321,7 +324,12 @@ def phase(args):
             else:
                 logger.info("Bubble chain with %d bubbles",
                             len(phaser.bubbles))
-                for i, (haploblock, include_last) in enumerate(phaser.phase()):
+                if not read_alignments:
+                    with open(args.alignments_gfa) as f:
+                        read_alignments = _get_read_alignments(f, reads)
+
+                for i, (haploblock, include_last) in enumerate(
+                        phaser.phase(read_alignments)):
                     # Output the DNA sequence for each haplotype
                     logger.info("Haploblock %d, building DNA sequences for "
                                 "each haplotype...", i)

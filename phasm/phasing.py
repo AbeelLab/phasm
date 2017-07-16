@@ -108,16 +108,12 @@ class HaplotypeSet:
 
 class BubbleChainPhaser:
     def __init__(self, g: AssemblyGraph,
-                 alignments: AlignmentsT,
                  ploidy: int,
-                 coverage_model: CoverageModel,
                  min_spanning_reads: int,
                  threshold: PruneParam,
                  prune_factor: PruneParam):
         self.g = g
-        self.alignments = alignments
         self.ploidy = ploidy
-        self.coverage_model = coverage_model
 
         self.start_of_block = True
 
@@ -168,9 +164,11 @@ class BubbleChainPhaser:
 
         logger.debug("Superbubbles: %s", self.bubbles)
 
-    def phase(self) -> Iterable[Tuple[HaplotypeSet, bool]]:
+    def phase(self, alignments: AlignmentsT) -> Iterable[
+            Tuple[HaplotypeSet, bool]]:
         logger.info("Start phasing haplograph with %d bubbles",
                     self.num_bubbles)
+        self.alignments = alignments
 
         entrance = self.start_points[0]
 
@@ -231,8 +229,8 @@ class BubbleChainPhaser:
                 relevant_reads, cur_bubble_graph_reads)
 
             total_relevant_la = 0
-            for alignments, _ in rel_read_info.values():
-                total_relevant_la += len(alignments)
+            for read_alignments, _ in rel_read_info.values():
+                total_relevant_la += len(read_alignments)
 
             logger.info("%d relevant reads inducing %d relevant local "
                         "alignments", len(relevant_reads),

@@ -8,9 +8,11 @@ This is a separate module to prevent circular imports.
 from typing import (Mapping, Set, Callable, Union, Tuple, Iterable, NamedTuple,
                     Any)
 
-# Pairwise local alignments
+# Reads and pairwise local alignments
+Read = 'phasm.alignments.Read'
 OrientedDNASegment = 'phasm.alignments.OrientedDNASegment'
 OrientedRead = 'phasm.alignments.OrientedRead'
+ReadMapping = Mapping[str, Read]
 LocalAlignment = 'phasm.alignments.LocalAlignment'
 AlignmentsT = Mapping[OrientedRead, Set[LocalAlignment]]
 

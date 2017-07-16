@@ -13,6 +13,7 @@ from typing import TextIO, Mapping, NamedTuple, List, Union
 from collections import defaultdict
 from itertools import zip_longest
 
+from phasm.typing import ReadMapping
 from phasm.alignments import Read, LocalAlignment, Strand, MergedReads
 from phasm.assembly_graph import AssemblyGraph
 
@@ -107,7 +108,7 @@ def gfa2_line_to_la(reads: Mapping[str, Read]):
     return mapper
 
 
-def gfa2_parse_segments(f: TextIO):
+def gfa2_parse_segments(f: TextIO) -> ReadMapping:
     read_iter = map(gfa2_segment_to_read, (l for l in f if l.startswith('S')))
     return {r.id: r for r in read_iter}
 
