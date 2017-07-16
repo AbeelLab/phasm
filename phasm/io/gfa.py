@@ -188,10 +188,16 @@ def gfa2_reconstruct_assembly_graph(gfa_file: TextIO,
 
             node1 = MergedReads(fragment.id, fragment.length, "+", reads,
                                 fragment.prefix_lengths)
-            node2 = node1.reverse()
+            # Merged read nodes only occur in "forward" orientation, see
+            # `phasm.assembly_graph.merge_unambiguous_reads`
+            node2 = None
 
         nodes_map[str(node1)] = node1
-        nodes_map[str(node2)] = node2
+        g.add_node(node1)
+
+        if node2:
+            nodes_map[str(node2)] = node2
+            g.add_node(node2)
 
     # Parse edges, if `with_orig_reads` is given, use the mapping created above
     # to obtain the right nodes.
