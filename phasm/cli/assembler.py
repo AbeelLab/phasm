@@ -335,8 +335,7 @@ def phase(args):
                                 "each haplotype...", i)
                     for j, haplotype in enumerate(haploblock.haplotypes):
                         seq = g.sequence_for_path(
-                            g.node_path_edges(haplotype, data=True),
-                            include_last=include_last
+                            g.node_path_edges(haplotype, data=True)
                         )
 
                         name = "{}.haploblock{}.{}".format(
