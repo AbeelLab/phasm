@@ -27,17 +27,18 @@ setup(
 
     author='Lucas van Dijk',
     author_email='info@lucasvandijk.nl',
-    url='https://bitbucket.org/tudelft-bioinformatics/phasm',
+    url='https://github.com/lrvdijk/phasm',
 
     description='Haplotype-aware de novo genome assembler for aneuploid '
-                'organisms from long read data.',
+                'and polyploid organisms from long read data.',
     long_description=__doc__.strip(),
     license='MIT',
 
     # Dependencies
     install_requires=[
         'networkx>=1.9',
-        'numpy>=1.11'
+        'numpy>=1.11',
+        'scipy>=0.16'
     ],
     setup_requires=['pytest-runner'],
     test_requires=['pytest', 'pytest-cov'],
