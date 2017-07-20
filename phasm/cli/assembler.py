@@ -260,14 +260,14 @@ def chain(args):
 def _get_read_alignments(f: TextIO, reads: ReadMapping) -> AlignmentsT:
     logger.info("Pass 2 of alignments GFA2 file to import all pairwise local "
                 "alignments...")
-    read_alignments = defaultdict(set)
+    read_alignments = defaultdict(dict)
 
     la_iter = map(gfa.gfa2_line_to_la(reads),
                   (l for l in f if l.startswith('E')))
 
     for la in la_iter:
         a_read, b_read = la.get_oriented_reads()
-        read_alignments[a_read].add(la)
+        read_alignments[a_read][b_read] = la
 
     logger.info("Done.")
 
@@ -303,7 +303,10 @@ def phase(args):
 
             logger.info("Start phasing process, ploidy %d...", args.ploidy)
             phaser = BubbleChainPhaser(g, args.ploidy, args.min_spanning_reads,
-                                       args.threshold, args.prune_factor)
+                                       args.max_bubble_size, args.threshold,
+                                       args.prune_factor, args.max_candidates,
+                                       args.max_prune_rounds,
+                                       args.prune_step_size)
 
             id_base = os.path.basename(gfa_file[:gfa_file.rfind('.')])
             if len(phaser.bubbles) == 0:
@@ -328,8 +331,7 @@ def phase(args):
                     with open(args.alignments_gfa) as f:
                         read_alignments = _get_read_alignments(f, reads)
 
-                for i, (haploblock, include_last) in enumerate(
-                        phaser.phase(read_alignments)):
+                for i, haploblock in enumerate(phaser.phase(read_alignments)):
                     # Output the DNA sequence for each haplotype
                     logger.info("Haploblock %d, building DNA sequences for "
                                 "each haplotype...", i)
@@ -481,21 +483,52 @@ def main():
         help="The ploidy level."
     )
     phase_parser.add_argument(
-        '-t', '--threshold', type=float, default=0.1, required=False,
-        help="The minimum relative likelihood of a candidate haplotype set "
-             "to be considered for any following bubbles (default: 0.1)."
-    )
-    phase_parser.add_argument(
-        '-d', '--prune-factor', type=float, default=0.5, required=False,
-        help="Any candidate haplotype set with a relative likelihood lower "
-             "than the given prune factor times the top scoring candidate "
-             "will be pruned (default: 0.5)."
-    )
-    phase_parser.add_argument(
         '-s', '--min-spanning-reads', type=int, default=3, required=False,
         help="If there re less spanning reads between two bubbles than the "
              "given number then PHASM will start a new haploblock."
     )
+    phase_parser.add_argument(
+        '-b', '--max-bubble-size', type=int, default=10, required=False,
+        help="The maximum number of simple paths through a bubble. If a "
+             "bubble contains more paths from its entrance to exit than the "
+             "given number, it is considered too big, and a new haploblock "
+             "will be created. The bubble itself will be phased on its own "
+             "and not in conjunction with other bubbles. Especially for "
+             "larger ploidies you may want to lower this number a bit, as the "
+             "number of k-tuples is p^k, where p is the number of paths. "
+             "Default value is 10."
+    )
+    phase_parser.add_argument(
+        '-t', '--threshold', type=float, default=1e-3, required=False,
+        help="The minimum relative likelihood of a candidate haplotype set "
+             "to be considered for any following bubbles (default: 1e-3)."
+    )
+    phase_parser.add_argument(
+        '-d', '--prune-factor', type=float, default=0.1, required=False,
+        help="Any candidate haplotype set with a relative likelihood lower "
+             "than the given prune factor times the top scoring candidate "
+             "will be pruned (default: 0.1)."
+    )
+    phase_parser.add_argument(
+        '-c', '--max-candidates', type=int, default=500, required=False,
+        help="At each bubble, limit the number of candidate haplotype sets. "
+             "If there more candidates than the given number even after an "
+             "initial pruning step, we increasingly prune more stringest "
+             "another time, until the number of candidates falls below the "
+             "given number (default 500). The maximum number of pruning "
+             "rounds can be specified with the option '-r'."
+    )
+    phase_parser.add_argument(
+        '-r', '--max-prune-rounds', type=int, default=9, required=False,
+        help="Maximum number of pruning rounds if the number of candidate "
+             "haplotype sets is to high (default: 9)."
+    )
+    phase_parser.add_argument(
+        '-S', '--prune-step-size', type=float, default=0.1, required=False,
+        help="With each pruning round, increase the prune factor with the "
+             "given number (default: 0.1)."
+    )
+
     phase_parser.add_argument(
         '-o', '--output', type=argparse.FileType('wb'), default=sys.stdout,
         help="Output file (default: stdout)."
