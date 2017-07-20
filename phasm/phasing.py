@@ -320,11 +320,13 @@ class BubbleChainPhaser:
                 logger.info("Try again at the same bubble, but now as start "
                             "of a new haplotype block")
 
-        # Only keep the most probable haplotype set(s)
-        self.candidate_sets = self.prune(self.candidate_sets, 1.0)
-        logger.info("Got %d equally likely candidate sets, picking a random "
-                    "one.", len(self.candidate_sets))
-        yield random.choice(self.candidate_sets)
+        # Only keep the most probable haplotype set(s) if one's available
+        if not self.start_of_block:
+            self.candidate_sets = self.prune(self.candidate_sets, 1.0)
+            logger.info("Got %d equally likely candidate sets, picking a random "
+                        "one.", len(self.candidate_sets))
+            yield random.choice(self.candidate_sets)
+
         logger.info("Done")
 
     def new_block(self):
