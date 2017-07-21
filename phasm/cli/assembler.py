@@ -335,6 +335,10 @@ def phase(args):
                     # Output the DNA sequence for each haplotype
                     logger.info("Haploblock %d, building DNA sequences for "
                                 "each haplotype...", i)
+                    if args.paths_output:
+                        args.paths_output.write("# {}.haploblock{}\n".format(
+                            id_base, i))
+
                     for j, haplotype in enumerate(haploblock.haplotypes):
                         seq = g.sequence_for_path(
                             g.node_path_edges(haplotype, data=True)
@@ -343,6 +347,10 @@ def phase(args):
                         name = "{}.haploblock{}.{}".format(
                             id_base, i, j).encode('ascii')
                         fw.write_entry((seq, name))
+
+                        if args.paths_output:
+                            args.paths_output.write("{}\n".format(", ".join(
+                                map(str, haplotype))))
 
             logger.info("Done with %s", gfa_file)
 
@@ -529,6 +537,12 @@ def main():
              "given number (default: 0.1)."
     )
 
+    phase_parser.add_argument(
+        '-P', '--paths-output', type=argparse.FileType('w'), default=None,
+        required=False,
+        help="Output the node names of each path through the graph for each "
+             "haplotype to the given file. Optional."
+    )
     phase_parser.add_argument(
         '-o', '--output', type=argparse.FileType('wb'), default=sys.stdout,
         help="Output file (default: stdout)."
