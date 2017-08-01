@@ -335,14 +335,16 @@ def phase(args):
                     with open(args.alignments_gfa) as f:
                         read_alignments = _get_read_alignments(f, reads)
 
-                for i, haploblock in enumerate(phaser.phase(read_alignments)):
+                for i, (haploblock, include_last) in enumerate(
+                        phaser.phase(read_alignments)):
                     # Output the DNA sequence for each haplotype
                     logger.info("Haploblock %d, building DNA sequences for "
                                 "each haplotype...", i)
 
                     for j, haplotype in enumerate(haploblock.haplotypes):
                         seq = g.sequence_for_path(
-                            g.node_path_edges(haplotype, data=True)
+                            g.node_path_edges(haplotype, data=True),
+                            include_last=include_last
                         )
 
                         name = "{}.haploblock{}.{}".format(

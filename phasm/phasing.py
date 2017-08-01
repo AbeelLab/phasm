@@ -178,7 +178,8 @@ class BubbleChainPhaser:
 
         logger.debug("Superbubbles: %s", self.bubbles)
 
-    def phase(self, alignments: AlignmentsT) -> Iterable[HaplotypeSet]:
+    def phase(self, alignments: AlignmentsT) -> Iterable[Tuple[
+            HaplotypeSet, bool]]:
         logger.info("Start phasing haplograph with %d bubbles",
                     self.num_bubbles)
         self.alignments = alignments
@@ -247,7 +248,8 @@ class BubbleChainPhaser:
                 rel_read_info = self.get_relevant_read_info(
                     cur_bubble_aligning_reads, cur_bubble_graph_reads, exit)
 
-                yield self.phase_large_bubble(possible_paths, rel_read_info)
+                yield (self.phase_large_bubble(possible_paths, rel_read_info),
+                       False)
                 logger.info("Built haplotypes for large bubble, move to next")
 
                 # Move to the next bubble and continue
@@ -333,7 +335,7 @@ class BubbleChainPhaser:
             self.candidate_sets = self.prune(self.candidate_sets, 1.0)
             logger.info("Got %d equally likely candidate sets, picking a "
                         "random one.", len(self.candidate_sets))
-            yield random.choice(self.candidate_sets)
+            yield random.choice(self.candidate_sets), True
 
         logger.info("Done")
 
@@ -352,7 +354,13 @@ class BubbleChainPhaser:
         self.prev_aligning_reads = set()
         self.start_of_block = True
 
-        return random_best
+        # The "False" constant here denotes the "include_last" parameter,
+        # to signal whether to use the sequence of the last node in each
+        # haplotype. Starting a new block implies that there more bubbles
+        # after the current one, so the last node of each haplotype is also
+        # still a bubble entrance. Therefore we don't want to include this
+        # sequence.
+        return random_best, False
 
     def get_relevant_read_info(self, relevant_reads: Set[OrientedRead],
                                cur_bubble_graph_reads: Set[OrientedRead],
