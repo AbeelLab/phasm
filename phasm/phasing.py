@@ -23,6 +23,7 @@ from phasm.assembly_graph import AssemblyGraph
 from phasm.bubbles import find_superbubbles, superbubble_nodes
 from phasm.typing import (Node, AlignmentsT, PruneParam, RelevantReadInfo,
                           RelevantReads)
+from phasm.utils import DebugDataLogger
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +116,8 @@ class BubbleChainPhaser:
                  prune_factor: PruneParam,
                  max_candidates: int,
                  max_prune_rounds: int,
-                 prune_step_size: float):
+                 prune_step_size: float,
+                 debug_data_log: DebugDataLogger=None):
         self.g = g
         self.ploidy = ploidy
 
@@ -137,6 +139,9 @@ class BubbleChainPhaser:
         self.prune_step_size = prune_step_size
 
         self.candidate_sets = [HaplotypeSet(self.ploidy)]
+
+        self.debug_data_log = (debug_data_log if debug_data_log else
+                               DebugDataLogger())
 
         # Superbubbles without an interior are filtered, to make it a bit
         # easier to identify subgraphs which are just linear paths instead of
@@ -285,6 +290,9 @@ class BubbleChainPhaser:
                         "alignments", len(relevant_reads),
                         total_relevant_la)
 
+            self.debug_data_log.new_bubble(entrance, exit, self.start_of_block,
+                                           rel_read_info)
+
             if total_relevant_la == 0:
                 logger.info("No relevant alignments, can not phase. Skipping "
                             "this bubble.")
@@ -323,8 +331,8 @@ class BubbleChainPhaser:
         # Only keep the most probable haplotype set(s) if one's available
         if not self.start_of_block:
             self.candidate_sets = self.prune(self.candidate_sets, 1.0)
-            logger.info("Got %d equally likely candidate sets, picking a random "
-                        "one.", len(self.candidate_sets))
+            logger.info("Got %d equally likely candidate sets, picking a "
+                        "random one.", len(self.candidate_sets))
             yield random.choice(self.candidate_sets)
 
         logger.info("Done")
@@ -559,6 +567,7 @@ class BubbleChainPhaser:
 
         # Calculate P[SR|H,E]
         p_sr = 0.0
+        read_probs = []
         for read, info in relevant_reads.items():
             read_prob = 0.0
             for hap_read_set, ext_read_set in zip(hs.read_sets, ext_read_sets):
@@ -581,6 +590,7 @@ class BubbleChainPhaser:
                     read_prob += hap_prob
 
             read_prob /= self.ploidy
+            read_probs.append(read_prob)
             logger.debug("Read probability: %.4f", read_prob)
             p_sr += read_prob
 
@@ -605,6 +615,9 @@ class BubbleChainPhaser:
 
         logger.debug("log P[R|H,E] = %.3f, log P[E] = %.3f", p_sr, prior)
         logger.debug("log RL[E|H,R] = %.3f", p_sr + prior)
+
+        self.debug_data_log.candidate_set(hs, extension, read_probs, p_sr,
+                                          prior)
 
         return p_sr + prior
 

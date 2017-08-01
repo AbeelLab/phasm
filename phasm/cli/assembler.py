@@ -19,6 +19,7 @@ from phasm.assembly_graph import (build_assembly_graph, clean_graph,
 from phasm.filter import (ContainedReads, MaxOverhang, MinReadLength,
                           MinOverlapLength)
 from phasm.phasing import BubbleChainPhaser
+from phasm.utils import DebugDataLogger
 
 logger = logging.getLogger()
 
@@ -286,6 +287,8 @@ def phase(args):
     sequence_src = FastaSource(args.reads_fasta)
     read_alignments = None
 
+    debug_data_log = DebugDataLogger(args.debug_data)
+
     with dinopy.FastaWriter(args.output, force_overwrite=True) as fw:
         for gfa_file in args.subgraphs:
             logger.info("Subgraph %s", gfa_file)
@@ -306,7 +309,8 @@ def phase(args):
                                        args.max_bubble_size, args.threshold,
                                        args.prune_factor, args.max_candidates,
                                        args.max_prune_rounds,
-                                       args.prune_step_size)
+                                       args.prune_step_size,
+                                       debug_data_log=debug_data_log)
 
             id_base = os.path.basename(gfa_file[:gfa_file.rfind('.')])
             if len(phaser.bubbles) == 0:
@@ -335,9 +339,6 @@ def phase(args):
                     # Output the DNA sequence for each haplotype
                     logger.info("Haploblock %d, building DNA sequences for "
                                 "each haplotype...", i)
-                    if args.paths_output:
-                        args.paths_output.write("# {}.haploblock{}\n".format(
-                            id_base, i))
 
                     for j, haplotype in enumerate(haploblock.haplotypes):
                         seq = g.sequence_for_path(
@@ -348,9 +349,10 @@ def phase(args):
                             id_base, i, j).encode('ascii')
                         fw.write_entry((seq, name))
 
-                        if args.paths_output:
-                            args.paths_output.write("{}\n".format(", ".join(
-                                map(str, haplotype))))
+                    debug_data_log.haploblock(
+                        haploblock.haplotypes, "{}.haploblock{}".format(
+                            id_base, i)
+                    )
 
             logger.info("Done with %s", gfa_file)
 
@@ -538,10 +540,10 @@ def main():
     )
 
     phase_parser.add_argument(
-        '-P', '--paths-output', type=argparse.FileType('w'), default=None,
+        '-D', '--debug-data', type=argparse.FileType('w'), default=None,
         required=False,
-        help="Output the node names of each path through the graph for each "
-             "haplotype to the given file. Optional."
+        help="Output another file containing loads of debug data produced "
+             "during the phasing process (optional)."
     )
     phase_parser.add_argument(
         '-o', '--output', type=argparse.FileType('wb'), default=sys.stdout,

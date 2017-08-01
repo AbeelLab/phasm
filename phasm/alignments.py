@@ -234,6 +234,10 @@ class LocalAlignment:
         self.brange = brange
         self.alignment = alignment
 
+    def as_tuple(self):
+        return (str(self.a), str(self.b), self.strand, self.arange,
+                self.brange, self.alignment)
+
     def get_overlap_length(self) -> int:
         return max(self.arange[1] - self.arange[0],
                    self.brange[1] - self.brange[0])
