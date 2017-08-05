@@ -11,8 +11,8 @@ import argparse
 import dinopy
 
 from phasm.io import daligner, gfa
+from phasm.io.daligner import Strand
 from phasm.utils import random_string
-from phasm.alignments import Strand
 
 logging.basicConfig()
 logger = logging.getLogger(__name__)

@@ -3,12 +3,16 @@ This module contains some helper functions to parse data from DAZZ_DB and
 DALIGNER.
 """
 
+import enum
 import hashlib
 from typing import Iterable
 
 import numpy
 
-from phasm.alignments import Strand
+
+class Strand(enum.IntEnum):
+    SAME = 0
+    OPPOSITE = 1
 
 
 def generate_moviename_hash(filename: str) -> str:
