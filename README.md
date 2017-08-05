@@ -21,6 +21,7 @@ Requirements
 * NumPy >= 1.11
 * SciPy >= 0.16
 * NetworkX >= 1.9
+* dinopy >= 2.0
 * (tests) pytest
 
 Installation
