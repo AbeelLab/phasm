@@ -1,8 +1,7 @@
 PHASM: Haplotype-aware *de novo* genome assembly for polyploid organisms
 ========================================================================
 
-[![Build 
-Status](https://travis-ci.org/lrvdijk/phasm.svg?branch=master)](https://travis-ci.org/lrvdijk/phasm)
+[![Build Status](https://travis-ci.org/AbeelLab/phasm.svg?branch=master)](https://travis-ci.org/AbeelLab/phasm)
 
 PHASM is a long read *de novo* genome assembler that phases variants among 
 chromosome homologues during the assembly process, and aims to output separate 
@@ -41,8 +40,8 @@ Related Repositories
   pipeline that starts with finding pairwise local alignments between reads 
   using DALIGNER, and ends with an assembled polyploid genome.
 
-[aneusim]: https://github.com/lrvdijk/aneusim
-[phasm-benchmarks]: https://github.com/lrvdijk/phasm-benchmarks
+[aneusim]: https://github.com/AbeelLab/aneusim
+[phasm-benchmarks]: https://github.com/AbeelLab/phasm-benchmarks
 [snakemake]: https://bitbucket.org/snakemake/snakemake
 
 Documentation
