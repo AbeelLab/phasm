@@ -67,15 +67,16 @@ class DebugDataLogger:
         }, self.outfile)
         self.outfile.write("\n")
 
-    def haploblock(self, haplotypes, name):
+    def haploblock(self, hs, name):
         if not self.outfile:
             return
 
         json.dump({
             'type': 'haploblock',
             'name': name,
+            'from_large_bubble': hs.from_large_bubble,
             'haplotypes': [
-                [str(n) for n in h] for h in haplotypes
+                [str(n) for n in h] for h in hs.haplotypes
             ]
         }, self.outfile)
         self.outfile.write("\n")

@@ -36,7 +36,7 @@ def layout(args):
     logger.info("Pass [2/2] of GFA2 file to import local alignments "
                 "and build assembly graph...")
 
-    read_alignments = defaultdict(set)
+    read_alignments = defaultdict(dict)
 
     def alignment_recorder(la_iter: Iterable[LocalAlignment]) -> Iterable[
             LocalAlignment]:
@@ -44,7 +44,8 @@ def layout(args):
 
         for la in la_iter:
             a_read, b_read = la.get_oriented_reads()
-            read_alignments[a_read].add(la)
+            read_alignments[a_read][b_read] = la
+            read_alignments[b_read][a_read] = la.switch()
 
             yield la
 
@@ -269,6 +270,7 @@ def _get_read_alignments(f: TextIO, reads: ReadMapping) -> AlignmentsT:
     for la in la_iter:
         a_read, b_read = la.get_oriented_reads()
         read_alignments[a_read][b_read] = la
+        read_alignments[b_read][a_read] = la.switch()
 
     logger.info("Done.")
 
@@ -347,12 +349,18 @@ def phase(args):
                             include_last=include_last
                         )
 
-                        name = "{}.haploblock{}.{}".format(
-                            id_base, i, j).encode('ascii')
-                        fw.write_entry((seq, name))
+                        if haploblock.from_large_bubble:
+                            name = "{}.largebubble{}".format(id_base, i)
+                        else:
+                            name = "{}.haploblock{}.{}".format(id_base, i, j)
+                        fw.write_entry((seq, name.encode('utf-8')))
+
+                        if haploblock.from_large_bubble:
+                            # Only first haplotype is filled
+                            break
 
                     debug_data_log.haploblock(
-                        haploblock.haplotypes, "{}.haploblock{}".format(
+                        haploblock, "{}.haploblock{}".format(
                             id_base, i)
                     )
 

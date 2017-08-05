@@ -14,7 +14,7 @@ from collections import defaultdict
 from itertools import zip_longest
 
 from phasm.typing import ReadMapping
-from phasm.alignments import Read, LocalAlignment, Strand, MergedReads
+from phasm.alignments import Read, LocalAlignment, MergedReads
 from phasm.assembly_graph import AssemblyGraph
 
 _MergedFragment = NamedTuple('MergedFragment', [
@@ -96,14 +96,10 @@ def gfa2_line_to_la(reads: Mapping[str, Read]):
         a_read = reads[sid1[:-1]]
         b_read = reads[sid2[:-1]]
 
-        if sid1[-1] == '-':
-            raise ValueError("A-read as reverse complement, unsupported by "
-                             "phasm.")
-
-        strand = Strand.SAME if sid2[-1] == '+' else Strand.OPPOSITE
-
-        return LocalAlignment(a_read, b_read, strand, arange, brange,
-                              alignment)
+        return LocalAlignment(
+            a_read.with_orientation(sid1[-1]),
+            b_read.with_orientation(sid2[-1]),
+            arange, brange, alignment)
 
     return mapper
 

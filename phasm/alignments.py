@@ -12,11 +12,6 @@ Alignment = Union[Tracepoints, CIGAR]
 Range = Tuple[int, int]
 
 
-class Strand(enum.IntEnum):
-    SAME = 0
-    OPPOSITE = 1
-
-
 class AlignmentType(enum.IntEnum):
     OVERLAP_AB = 0
     OVERLAP_BA = 1
@@ -225,18 +220,21 @@ class MergedReads(OrientedDNASegment):
 
 
 class LocalAlignment:
-    def __init__(self, a: Read, b: Read, strand: Strand, arange: Range,
+    def __init__(self, a: OrientedRead, b: OrientedRead, arange: Range,
                  brange: Range, alignment: Alignment=None):
         self.a = a
         self.b = b
-        self.strand = strand
         self.arange = arange
         self.brange = brange
         self.alignment = alignment
 
     def as_tuple(self):
-        return (str(self.a), str(self.b), self.strand, self.arange,
+        return (str(self.a), str(self.b), self.arange,
                 self.brange, self.alignment)
+
+    def switch(self):
+        return LocalAlignment(
+            self.b, self.a, self.brange, self.arange, self.alignment)
 
     def get_overlap_length(self) -> int:
         return max(self.arange[1] - self.arange[0],
@@ -260,8 +258,7 @@ class LocalAlignment:
             return AlignmentType.OVERLAP_BA
 
     def get_oriented_reads(self) -> Tuple[OrientedRead, OrientedRead]:
-        return self.a.with_orientation('+'), self.b.with_orientation(
-            '+' if self.strand == Strand.SAME else '-')
+        return (self.a, self.b)
 
     @property
     def a_id(self) -> str:
@@ -276,15 +273,15 @@ class LocalAlignment:
             return False
 
         return (self.a == other.a and self.b == other.b and
-                self.strand == other.strand and self.arange == other.arange
+                self.arange == other.arange
                 and self.brange == other.brange)
 
     def __hash__(self) -> int:
-        return hash((self.a, self.b, self.strand, self.arange, self.brange))
+        return hash((self.a, self.b, self.arange, self.brange))
 
     def __len__(self) -> int:
         return self.get_overlap_length()
 
     def __repr__(self) -> str:
         return ("LocalAlignment[a={0.a_id}, b={0.b_id}, arange={0.arange}, "
-                "brange={0.brange}, strand={0.strand}]".format(self))
+                "brange={0.brange}]".format(self))

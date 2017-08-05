@@ -80,6 +80,7 @@ class HaplotypeSet:
                 self.read_sets.append(set())
 
         self.log_rl = float('-inf')
+        self.from_large_bubble = False
 
     def extend(self, extensions: List[Tuple[Node]],
                ext_read_sets: List[Set[OrientedRead]]) -> 'HaplotypeSet':
@@ -575,7 +576,7 @@ class BubbleChainPhaser:
 
         # Calculate P[SR|H,E]
         p_sr = 0.0
-        read_probs = []
+        read_probs = {}
         for read, info in relevant_reads.items():
             read_prob = 0.0
             for hap_read_set, ext_read_set in zip(hs.read_sets, ext_read_sets):
@@ -598,7 +599,7 @@ class BubbleChainPhaser:
                     read_prob += hap_prob
 
             read_prob /= self.ploidy
-            read_probs.append(read_prob)
+            read_probs[read.id] = read_prob
             logger.debug("Read probability: %.4f", read_prob)
             p_sr += read_prob
 
@@ -675,9 +676,10 @@ class BubbleChainPhaser:
         sorted_paths = sorted_paths[:self.ploidy]
 
         hs = HaplotypeSet(self.ploidy)
-        for i, path in enumerate(sorted_paths):
-            hs.haplotypes[i].extend(path)
-            hs.read_sets[i].update(path_read_sets[path])
+        hs.haplotypes[0].extend(sorted_paths[0])
+        hs.read_sets[0].update(path_read_sets[sorted_paths[0]])
+        hs.from_large_bubble = True
+
         logger.info("Done.")
 
         return hs
