@@ -91,13 +91,13 @@ def test_gfa_reconstruction(tmpdir, assembly_graph, orig_reads):
     with open(tmpfile.name) as f:
         g = gfa.gfa2_reconstruct_assembly_graph(f, graph_reads, orig_reads)
 
-    for n in g.nodes_iter():
-        assert n in assembly_graph
+    for n in assembly_graph.nodes_iter():
+        assert n in g
 
-    for u, v, d in g.edges_iter(data=True):
-        assert u in assembly_graph
-        assert v in assembly_graph
-        assert v in assembly_graph[u]
-        assert d == assembly_graph[u][v]
+    for u, v, d in assembly_graph.edges_iter(data=True):
+        assert u in g
+        assert v in g
+        assert v in g[u]
+        assert d == g[u][v]
 
     tmpfile.close()
