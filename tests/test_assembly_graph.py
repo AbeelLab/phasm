@@ -4,16 +4,29 @@ from phasm.assembly_graph import (AssemblyGraph, remove_tips,
                                   remove_transitive_edges, clean_graph)
 
 
+def node_path_edges(path):
+    node_iter = iter(path)
+
+    node1 = next(node_iter)
+    while True:
+        node2 = next(node_iter)
+        yield (node1, node2)
+
+        node1 = node2
+
+
 def test_tip_removal():
     g = AssemblyGraph()
-    g.add_edges_from(g.node_path_edges(['v1', 'v2', 'v3', 'v4', 'v5', 'v6',
-                                        'v7', 'v8', 'v9', 'v10', 'v11', 'v12',
-                                        'v13', 'v14', 'v15']))
+    g.add_edges_from(
+        (u, v, {'weight': 1}) for u, v in node_path_edges([
+            'v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9', 'v10', 'v11',
+            'v12', 'v13', 'v14', 'v15'])
+    )
 
     g.add_edges_from([
-        ('v5', 'vt1'),
-        ('vt1', 'vt2'),
-        ('vt2', 'vt3')
+        ('v5', 'vt1', {'weight': 1}),
+        ('vt1', 'vt2', {'weight': 1}),
+        ('vt2', 'vt3', {'weight': 1})
     ])
 
     num_incoming, num_outgoing = remove_tips(g, 3)
@@ -33,14 +46,16 @@ def test_tip_removal():
     assert num_isolated_nodes == 3
 
     g = AssemblyGraph()
-    g.add_edges_from(g.node_path_edges(['v1', 'v2', 'v3', 'v4', 'v5', 'v6',
-                                        'v7', 'v8', 'v9', 'v10', 'v11', 'v12',
-                                        'v13', 'v14', 'v15']))
+    g.add_edges_from(
+        (u, v, {'weight': 1}) for u, v in node_path_edges([
+            'v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9', 'v10', 'v11',
+            'v12', 'v13', 'v14', 'v15'])
+    )
 
     g.add_edges_from([
-        ('vt1', 'vt2'),
-        ('vt2', 'vt3'),
-        ('vt3', 'v6')
+        ('vt1', 'vt2', {'weight': 1}),
+        ('vt2', 'vt3', {'weight': 1}),
+        ('vt3', 'v6', {'weight': 1})
     ])
 
     num_incoming, num_outgoing = remove_tips(g, 3)
@@ -62,9 +77,9 @@ def test_tip_removal():
 
 def test_transitive_reduction():
     g = AssemblyGraph()
-    g.add_edges_from(g.node_path_edges(['v1', 'v2', 'v3', 'v4', 'v5', 'v6',
-                                        'v7', 'v8', 'v9', 'v10', 'v11',
-                                        'v12']))
+    g.add_edges_from(node_path_edges(['v1', 'v2', 'v3', 'v4', 'v5', 'v6',
+                                      'v7', 'v8', 'v9', 'v10', 'v11',
+                                      'v12']))
 
     for u, v, data in g.edges_iter(data=True):
         data['weight'] = 1
