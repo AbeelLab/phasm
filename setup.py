@@ -57,8 +57,7 @@ ext_modules = [
         language='c++',
         extra_compile_args=[
             '-fopenmp',
-            '-O0',
-            '-g',
+            '-O3',
             '-DNDEBUG',
             '-DSEQAN_HAS_OPENMP=1'
         ],
