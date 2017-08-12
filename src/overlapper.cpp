@@ -92,7 +92,7 @@ vector<OverlapT> ExactOverlapper::overlaps(unsigned int min_length) {
 
             // Check if this leaf is contained in another string, and also
             // output contained overlaps
-            if(emptyParentEdge(it)) {
+            if(emptyParentEdge(it) && repLength(it) >= min_length) {
                 // Visit siblings
                 auto parent_it = TIterator(it);
                 goUp(parent_it);
