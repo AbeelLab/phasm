@@ -138,3 +138,6 @@ ENV/
 # Cmake build directories
 cmake-build-*/
 compile_commands.json
+
+tmp/
+
