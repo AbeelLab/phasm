@@ -11,6 +11,7 @@ import networkx
 from phasm.io import gfa
 from phasm.io.sequences import FastaSource
 from phasm.typing import ReadMapping, LocalAlignment, AlignmentsT
+from phasm.overlapper import ExactOverlapper
 from phasm.assembly_graph import (build_assembly_graph, clean_graph,
                                   remove_transitive_edges, remove_tips,
                                   make_symmetric, merge_unambiguous_paths,
@@ -22,6 +23,30 @@ from phasm.phasing import BubbleChainPhaser
 from phasm.utils import DebugDataLogger
 
 logger = logging.getLogger()
+
+
+def overlap(args):
+    args.output.write(gfa.gfa_header())
+    overlapper = ExactOverlapper()
+    fr = dinopy.FastaReader(args.fasta_input)
+
+    logger.info("Building suffix tree and searching for pairwise overlaps...")
+    for entry in fr.entries():
+        name = entry.name.decode('utf-8')
+        seq = entry.sequence.decode('utf-8')
+        args.output.write(gfa.gfa_line("S", name, entry.length, "*"))
+        overlapper.add_sequence(name + "+", seq)
+        overlapper.add_sequence(name + "-", dinopy.reverse_complement(seq))
+
+    overlaps = overlapper.overlaps(args.min_length)
+
+    logger.info("Writing to GFA2...")
+
+    for aread, bread, astart, aend, bstart, bend in overlaps:
+        args.output.write(gfa.gfa_line(
+            "E", "*", aread, bread, astart, aend, bstart, bend, "*"))
+
+    logger.info("Done.")
 
 
 def layout(args):
@@ -378,6 +403,27 @@ def main():
     )
 
     subparsers = parser.add_subparsers()
+
+    # -------------------------------------------------------------------------
+    # Overlap command
+    # -------------------------------------------------------------------------
+    overlap_parser = subparsers.add_parser(
+        'overlap', help="Find pairwise exact overlaps between reads with a "
+                        "given minimum length."
+    )
+    overlap_parser.set_defaults(func=overlap)
+
+    overlap_parser.add_argument(
+        '-l', '--min-length', type=int, required=False, default=1000,
+        help="The minimum overlap length between two reads (default: 1000)."
+    )
+    overlap_parser.add_argument(
+        '-o', '--output', type=argparse.FileType('w'), required=False,
+        default=sys.stdout,
+        help="The output file. Defaults to standard output."
+    )
+    overlap_parser.add_argument(
+        'fasta_input', help="The fasta file with reads.")
 
     # -------------------------------------------------------------------------
     # Layout command
