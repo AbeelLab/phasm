@@ -2,3 +2,4 @@ networkx>=1.9
 numpy>=1.11
 scipy>=0.16
 dinopy>=2.0
+pybind11>=1.7

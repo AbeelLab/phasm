@@ -22,6 +22,7 @@ Requirements
 * SciPy >= 0.16
 * NetworkX >= 1.9
 * dinopy >= 2.0
+* pybind11 >= 1.7
 * (tests) pytest
 
 Installation
