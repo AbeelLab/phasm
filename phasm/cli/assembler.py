@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import logging
 import argparse
 from typing import Iterable, TextIO
@@ -85,6 +86,10 @@ def layout(args):
     filters.append(MaxOverhang(args.max_overhang_abs,
                                args.max_overhang_rel))
 
+    if args.metadata:
+        for f in filters:
+            f.debug = True
+
     with open(args.gfa_file) as gfa_file:
         la_iter = map(gfa.gfa2_line_to_la(reads),
                       (l for l in gfa_file if l.startswith('E')))
@@ -100,6 +105,16 @@ def layout(args):
 
         for f in filters:
             filtered = f.filtered
+
+            if (f.debug_data or f.nodes_to_remove) and args.metadata:
+                json.dump({
+                    'filter': f.__class__.__name__,
+                    'la_filtered': [
+                        (str(r1), str(r2)) for r1, r2 in f.debug_data
+                    ],
+                    'reads_filtered': [str(r) for r in f.nodes_to_remove]
+                }, args.metadata)
+                args.metadata.write("\n")
 
             if f.nodes_to_remove:
                 for read in f.nodes_to_remove:
@@ -128,6 +143,17 @@ def layout(args):
 
     num_asymm_edges = 0
     edges_to_remove = remove_transitive_edges(g, args.length_fuzz)
+
+    if args.metadata:
+        json.dump({
+            'filter': 'TransitiveReduction',
+            'la_filtered': [
+                (str(r1), str(r2)) for r1, r2 in edges_to_remove
+            ],
+            'reads_filtered': []
+        }, args.metadata)
+        args.metadata.write("\n")
+
     logger.info("Removing %d transitive edges...", len(edges_to_remove))
     g.remove_edges_from(edges_to_remove)
     num_asymm_edges += make_symmetric(g)
@@ -493,6 +519,12 @@ def main():
              "the file extension for output type. Supported file extensions "
              "are 'graphml' and 'gfa'. This option can be used multiple times "
              "to write multiple files."
+    )
+    layout_io_group.add_argument(
+        '-M', '--metadata', type=argparse.FileType('w'), default=None,
+        metavar="JSON_FILE", required=False,
+        help="Output a bit of debug data to the given JSON file. Optional. "
+             "This will increase memory usage when enabled."
     )
     layout_io_group.add_argument(
         'gfa_file', help="Input GFA2 file with all pairwise local alignments."

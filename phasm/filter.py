@@ -10,12 +10,17 @@ class AlignmentFilter(metaclass=ABCMeta):
         self.nodes_to_remove = set()
         self.logger = logging.getLogger("{}.{}".format(
             __name__, self.__class__.__name__))
+        self.debug = False
+        self.debug_data = []
 
     def __call__(self, la):
         result = self.filter(la)
         if not result:
             self.logger.debug("Filtered local alignment: %s", la)
             self._filtered += 1
+
+            if self.debug:
+                self.debug_data.append(la.get_oriented_reads())
 
         return result
 
