@@ -83,7 +83,7 @@ PHASM uses 3 main "file types":
     * PHASM uses this file type for both the complete assembly graph and each 
       individual bubble chain.
 
-External links:
+### External Links
 
 * [GFA2 spec][gfa2-spec]
 
@@ -172,6 +172,12 @@ times on the command line, it will generate multiple files. It will check the
 file extension to determine what kind of file to write. PHASM can write GraphML 
 files (useful for visualising in Cytoscape) and GFA(2) files. It is not 
 possible to write both GFA1 and GFA2 at the same time.
+
+### External Links
+
+* [miniasm][miniasm]
+
+[miniasm]: https://academic.oup.com/bioinformatics/article/32/14/2103/1742895/Minimap-and-miniasm-fast-mapping-and-de-novo
 
 `phasm chain` - Identify bubble chains
 --------------------------------------
