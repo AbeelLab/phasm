@@ -89,6 +89,20 @@ PHASM uses 3 main "file types":
 
 [gfa2-spec]: https://github.com/GFA-spec/GFA-spec/blob/master/GFA2.md
 
+Logging Output
+--------------
+
+PHASM logs messages describing its current state to standard error. Its 
+verboseness can be controlled using the `-v` switch, and this works for any of 
+the commands described below. PHASM has three verboseness levels. Please note 
+that the `-v` switch needs to be set before any of the subcommands.
+
+Examples:
+
+    phasm overlap ...  # No logging
+    phasm -v layout ...  # Verboseness level 1
+    phasm -vv layout ..  # Verboseness level 2
+
 `phasm overlap` - Overlapper
 ----------------------------
 
@@ -289,3 +303,8 @@ This command performs the actual phasing. It requires three input files: the
 FASTA file with reads, the pairwise overlaps file (created using `phasm 
 overlap`), and the bubble chain GFA2 file. The reads FASTA file should have an 
 accompanying index file (created using `samtools faidx`).
+
+My [master thesis][master-thesis] describes the phasing algorithm in more 
+detail.
+
+[master-thesis]: https://github.com/AbeelLab/phasm/raw/master/docs/master-thesis.pdf
