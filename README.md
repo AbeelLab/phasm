@@ -20,7 +20,7 @@ Requirements
 * Python >= 3.5
 * NumPy >= 1.11
 * SciPy >= 0.16
-* NetworkX >= 1.9
+* NetworkX >= 1.9, NetworkX >= 2.0 not supported
 * dinopy >= 2.0
 * pybind11 >= 1.7
 * (tests) pytest
